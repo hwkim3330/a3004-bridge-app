@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -124,6 +125,58 @@ private fun hsv(h: Float, s: Float, v: Float): Color {
     return Color(r + m, g + m, b + m)
 }
 
+
+/**
+ * A knob that looks like a physical thing.
+ *
+ * Flat grey circles were the weakest part of this screen. What sells a control as
+ * touchable is not colour but the pair of cues a real one has: a well that looks
+ * recessed, and a cap that looks to be sitting above it. Both are faked here with
+ * radial gradients, which is cheap and enough - a shadow is only a gradient
+ * anyway.
+ */
+private fun DrawScope.knob(at: Offset, r: Float, armed: Boolean, held: Boolean) {
+    // Cast shadow: offset down, soft, and stronger while held so pressing reads
+    // as the cap moving toward the surface.
+    drawCircle(
+        brush = Brush.radialGradient(
+            0f to Color.Black.copy(alpha = if (held) 0.10f else 0.16f),
+            1f to Color.Transparent,
+            center = Offset(at.x, at.y + r * 0.18f),
+            radius = r * 1.45f
+        ),
+        radius = r * 1.45f,
+        center = Offset(at.x, at.y + r * 0.18f)
+    )
+    // The cap. White when idle so it reads as a control rather than a smudge;
+    // accent-green when armed, because that is the one state worth colouring.
+    val top = if (armed) Color(0xFF3FD06A) else Color.White
+    val bottom = if (armed) Color(0xFF1E9E4A) else Color(0xFFEDEDF2)
+    drawCircle(
+        brush = Brush.verticalGradient(
+            0f to top, 1f to bottom,
+            startY = at.y - r, endY = at.y + r
+        ),
+        radius = r, center = at
+    )
+    // A hairline so the white cap has an edge against a light well.
+    drawCircle(Color.Black.copy(alpha = 0.10f), r, at, style = Stroke(1f))
+}
+
+/** A recessed well for a knob to sit in. */
+private fun DrawScope.well(centre: Offset, r: Float) {
+    drawCircle(T.surfaceHi, r, centre)
+    // Darker at the top inner edge, which is what "recessed" looks like.
+    drawCircle(
+        brush = Brush.verticalGradient(
+            0f to Color.Black.copy(alpha = 0.07f),
+            0.45f to Color.Transparent,
+            startY = centre.y - r, endY = centre.y + r
+        ),
+        radius = r, center = centre
+    )
+}
+
 /**
  * Two-axis stick. Reports normalised x/y with up as positive y.
  *
@@ -176,21 +229,15 @@ fun Joystick(
         val r = min(size.width, size.height) / 2f * 0.96f
         val knobR = r * 0.30f
 
-        drawCircle(T.surfaceHi, r, Offset(cx, cy))
-        drawCircle(T.hairline, r, Offset(cx, cy), style = Stroke(1f))
+        well(Offset(cx, cy), r)
         // The travel limit, so the dead area outside it is visible not just felt.
-        drawCircle(T.gridStrong, r - knobR, Offset(cx, cy),
-            style = Stroke(1f))
+        drawCircle(T.gridStrong, r - knobR, Offset(cx, cy), style = Stroke(1f))
         drawLine(T.gridWeak,
-            Offset(cx - r * 0.66f, cy), Offset(cx + r * 0.66f, cy))
+            Offset(cx - r * 0.60f, cy), Offset(cx + r * 0.60f, cy))
         drawLine(T.gridWeak,
-            Offset(cx, cy - r * 0.66f), Offset(cx, cy + r * 0.66f))
+            Offset(cx, cy - r * 0.60f), Offset(cx, cy + r * 0.60f))
 
-        val fill = if (armed) T.good else T.textDim
-        val at = Offset(cx + knob.x, cy + knob.y)
-        drawCircle(fill.copy(alpha = if (held) 0.95f else 0.75f), knobR, at)
-        drawCircle(Color.Black.copy(alpha = if (held) 0.22f else 0.10f), knobR, at,
-            style = Stroke(1f))
+        knob(Offset(cx + knob.x, cy + knob.y), knobR, armed, held)
     }
 }
 
@@ -240,22 +287,23 @@ fun YawSlider(
         val rad = size.height / 2f
         val knobR = rad * 0.82f
 
-        drawRoundRect(T.surfaceHi, size = size,
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(rad, rad))
-        drawRoundRect(T.hairline, size = size,
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(rad, rad),
-            style = Stroke(1f))
+        val cr = androidx.compose.ui.geometry.CornerRadius(rad, rad)
+        drawRoundRect(T.surfaceHi, size = size, cornerRadius = cr)
+        drawRoundRect(
+            brush = Brush.verticalGradient(
+                0f to Color.Black.copy(alpha = 0.07f),
+                0.45f to Color.Transparent,
+                startY = 0f, endY = size.height
+            ),
+            size = size, cornerRadius = cr
+        )
         // Centre detent: the only position meaning "not turning", so it is marked
         // rather than inferred from where the knob happens to be.
         drawRect(T.trackIdle,
             topLeft = Offset(size.width / 2f - 0.5f, size.height * 0.28f),
             size = Size(1f, size.height * 0.44f))
 
-        val fill = if (armed) T.good else T.textDim
-        val at = Offset(size.width / 2f + kx, cy)
-        drawCircle(fill.copy(alpha = if (held) 0.95f else 0.75f), knobR, at)
-        drawCircle(Color.Black.copy(alpha = if (held) 0.22f else 0.10f), knobR, at,
-            style = Stroke(1f))
+        knob(Offset(size.width / 2f + kx, cy), knobR, armed, held)
     }
 }
 

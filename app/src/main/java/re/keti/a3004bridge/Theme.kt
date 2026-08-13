@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -97,43 +98,68 @@ object T {
     val s2 = 8.dp
     val s3 = 12.dp
     val s4 = 16.dp
-    val s5 = 24.dp
+    val s5 = 20.dp
+    val s6 = 28.dp
 
+    // Bigger surfaces get more curvature, which is what keeps a large card from
+    // reading as a rectangle with the corners filed off.
     val rSm = RoundedCornerShape(12.dp)
-    val rMd = RoundedCornerShape(18.dp)
-    val rLg = RoundedCornerShape(22.dp)
+    val rMd = RoundedCornerShape(22.dp)
+    val rPill = RoundedCornerShape(percent = 50)
 
-    val title = TextStyle(color = text, fontSize = 19.sp,
-        fontWeight = FontWeight.SemiBold, letterSpacing = (-0.3).sp)
+    /** The one big thing on screen. */
+    val title = TextStyle(color = text, fontSize = 22.sp,
+        fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
 
-    /** Section heading: small, tracked out, muted. A label, not a shout. */
-    val label = TextStyle(color = textFaint, fontSize = 10.sp,
-        fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp)
+    /**
+     * A card's name. Sentence case at a readable size, not a tracked-out
+     * micro-caption: hierarchy comes from weight and size, and shrinking a
+     * heading until it needs letter-spacing to be legible is the opposite of
+     * hierarchy.
+     */
+    val cardTitle = TextStyle(color = text, fontSize = 14.sp,
+        fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp)
 
-    val body = TextStyle(color = textDim, fontSize = 11.sp, lineHeight = 15.sp)
+    /** A quieter heading inside a card. */
+    val section = TextStyle(color = textDim, fontSize = 12.sp,
+        fontWeight = FontWeight.Medium)
 
-    /** Telemetry. Fixed-width digits, so a value changing does not shift its neighbour. */
-    val mono = TextStyle(color = textDim, fontSize = 11.sp,
+    val body = TextStyle(color = textDim, fontSize = 12.sp, lineHeight = 17.sp)
+
+    /** Telemetry. Fixed-width digits, so a changing value does not shift its neighbour. */
+    val mono = TextStyle(color = textDim, fontSize = 12.sp,
         fontFamily = FontFamily.Monospace)
 }
 
-/** A section label. */
+/** A quiet heading inside a card. Sentence case: it is a label, not a stencil. */
 @Composable
 fun Label(s: String, modifier: Modifier = Modifier) =
-    Text(s.uppercase(), style = T.label, modifier = modifier)
+    Text(s, style = T.section, modifier = modifier)
 
-/** Telemetry text. */
+/**
+ * A status line.
+ *
+ * Proportional, not monospaced. Mono is for a column of digits that must not
+ * shift; using it for prose - and for Korean prose especially - makes an
+ * interface read as log output, which is the wrong register for something you
+ * hold in your hands.
+ */
+@Composable
+fun Status(s: String, colour: Color = T.textDim, modifier: Modifier = Modifier) =
+    Text(s, style = T.body.copy(color = colour), modifier = modifier)
+
+/** For digits that change in place. */
 @Composable
 fun Mono(s: String, colour: Color = T.textDim, modifier: Modifier = Modifier) =
     Text(s, style = T.mono.copy(color = colour), modifier = modifier)
 
 /**
- * A panel: label on the left, a status slot on the right, content below.
+ * A card: name on the left, a status slot on the right, content below.
  *
- * `content` is given a Modifier already carrying the panel's weight, so a camera
- * frame or a plot stretches without the caller having to know how. Under views
- * this was the trap that gave the camera zero height - a weight inside a
- * wrap-content parent - and expressing it once here is why it cannot recur.
+ * `content` is handed a Modifier that already carries the weight, so a camera
+ * frame or a plot stretches without the caller knowing how. Under views this was
+ * the trap that gave the camera zero height - a weight inside a wrap-content
+ * parent - and expressing it once here is why it cannot recur.
  */
 @Composable
 fun Panel(
@@ -146,64 +172,81 @@ fun Panel(
         modifier
             // Shadow, not a border. On a grey page a white card is already
             // separated; an outline as well is the belt-and-braces look that
-            // makes a light interface feel drawn rather than lit. Applied before
-            // the clip so it renders outside the shape.
-            .shadow(2.dp, T.rMd, clip = false)
+            // makes a light interface feel drawn rather than lit.
+            .shadow(3.dp, T.rMd, clip = false)
             .clip(T.rMd)
             .background(T.surface)
     ) {
         Row(
-            Modifier.padding(start = T.s4, end = T.s4, top = T.s3, bottom = T.s2),
+            Modifier.padding(start = T.s5, end = T.s5, top = T.s4, bottom = T.s3),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Label(title, Modifier.weight(1f))
+            Text(title, style = T.cardTitle, modifier = Modifier.weight(1f))
             status()
         }
         content(Modifier.weight(1f, fill = true))
     }
 }
 
-/** A dot-and-text badge. The dot carries the colour so the text stays readable. */
+/**
+ * A status pill.
+ *
+ * Tinted rather than grey-with-a-dot: the same colour at low alpha behind text of
+ * that colour, which is how iOS marks state. It reads at a glance without adding
+ * a second shape to the row.
+ */
 @Composable
 fun Badge(text: String, colour: Color) {
-    Row(
-        Modifier
-            .clip(CircleShape)
-            .background(T.surfaceHi)
-            .padding(start = T.s2, end = T.s3, top = T.s1, bottom = T.s1),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(T.s2)
-    ) {
-        Box(Modifier.size(6.dp).clip(CircleShape).background(colour))
-        Mono(text)
-    }
+    Text(
+        text,
+        style = T.body.copy(color = colour, fontWeight = FontWeight.Medium),
+        modifier = Modifier
+            .clip(T.rPill)
+            .background(colour.copy(alpha = 0.13f))
+            .padding(horizontal = T.s3, vertical = 5.dp)
+    )
 }
 
-/** A tappable control that looks like one, rather than a system default. */
+/** How much a control wants to be noticed. */
+enum class Emph { Quiet, Tinted, Filled }
+
+/**
+ * A control that looks like one.
+ *
+ * Three weights, because a screen where every button is equally loud has no
+ * primary action - and here the primary action is the one that can move a
+ * vehicle.
+ */
 @Composable
 fun Chip(
     text: String,
     modifier: Modifier = Modifier,
-    fill: Color = T.surfaceHi,
-    fg: Color = T.text,
+    emph: Emph = Emph.Quiet,
+    colour: Color = T.accent,
     big: Boolean = false,
     onTap: () -> Unit,
 ) {
-    val shape: Shape = if (big) T.rLg else T.rSm
+    val shape = if (big) T.rPill else T.rSm
+    val fill = when (emph) {
+        Emph.Quiet -> T.surfaceHi
+        Emph.Tinted -> colour.copy(alpha = 0.13f)
+        Emph.Filled -> colour
+    }
+    val fg = when (emph) {
+        Emph.Quiet -> T.text
+        Emph.Tinted -> colour
+        Emph.Filled -> Color.White
+    }
     Box(
         modifier
+            .then(if (emph == Emph.Filled) Modifier.shadow(6.dp, shape, clip = false)
+                  else Modifier)
             .clip(shape)
             .background(fill)
-            .then(
-                // Outline only the quiet variant: a filled, coloured control
-                // already reads as raised and a border on it just muddies the edge.
-                if (fill == T.surfaceHi) Modifier.border(1.dp, T.hairline, shape)
-                else Modifier
-            )
             .clickable(onClick = onTap)
             .padding(
-                horizontal = if (big) T.s5 else T.s4,
-                vertical = if (big) T.s4 else T.s2
+                horizontal = if (big) T.s6 else T.s4,
+                vertical = if (big) T.s4 else 9.dp
             ),
         contentAlignment = Alignment.Center
     ) {
@@ -212,10 +255,35 @@ fun Chip(
             style = TextStyle(
                 color = fg,
                 fontSize = if (big) 17.sp else 13.sp,
-                fontWeight = FontWeight.Medium,
-                letterSpacing = if (big) 1.4.sp else 0.sp,
+                fontWeight = if (big) FontWeight.SemiBold else FontWeight.Medium,
+                letterSpacing = if (big) 0.2.sp else 0.sp,
                 textAlign = TextAlign.Center
             )
         )
+    }
+}
+
+/**
+ * What a panel shows when it has nothing to show.
+ *
+ * A blank rectangle is indistinguishable from a broken one. A mark and a line of
+ * text say "nothing here yet" rather than leaving the user to work out which.
+ */
+@Composable
+fun EmptyState(text: String, onDark: Boolean = false, modifier: Modifier = Modifier) {
+    val ink = if (onDark) Color.White.copy(alpha = 0.30f) else T.textFaint
+    Column(
+        modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            Modifier
+                .size(34.dp)
+                .clip(T.rSm)
+                .background(ink.copy(alpha = if (onDark) 0.12f else 0.18f))
+        )
+        Spacer(Modifier.size(T.s3))
+        Text(text, style = T.body.copy(color = ink))
     }
 }

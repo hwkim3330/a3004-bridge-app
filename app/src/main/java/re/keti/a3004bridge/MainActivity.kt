@@ -228,6 +228,7 @@ private fun Bridge() {
                     5 -> "AP 안 됨"
                     else -> "AP 접속"
                 }
+                , emph = Emph.Tinted
             ) {
                 // Binds only this app's sockets to the router's AP. The system
                 // keeps its own default network, which is what stops Android
@@ -257,7 +258,7 @@ private fun Bridge() {
 
         Row(Modifier.weight(1f)) {
             Panel(
-                "USB CAMERA", Modifier.weight(1.55f),
+                "카메라", Modifier.weight(1.55f),
                 status = { Badge(camState.first, camState.second) }
             ) { body ->
                 Column(body) {
@@ -271,13 +272,16 @@ private fun Bridge() {
                             .border(1.dp, T.hairline, T.rSm),
                         contentAlignment = Alignment.Center
                     ) {
-                        frame?.let {
+                        if (frame != null) {
                             Image(
-                                bitmap = it,
+                                bitmap = frame!!,
                                 contentDescription = null,
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Fit
                             )
+                        } else {
+                            EmptyState("카메라 대기 중", onDark = true,
+                                modifier = Modifier.fillMaxSize())
                         }
                     }
                     Row(
@@ -297,7 +301,7 @@ private fun Bridge() {
                             }
                         }
                         Spacer(Modifier.width(T.s3))
-                        Mono(micState)
+                        Status(micState)
                     }
                 }
             }
@@ -306,15 +310,15 @@ private fun Bridge() {
 
             Column(Modifier.weight(1f)) {
                 Panel(
-                    "LIDAR RANGE RING", Modifier.weight(1f),
-                    status = { Mono(ringState) }
+                    "라이다", Modifier.weight(1f),
+                    status = { Status(ringState) }
                 ) { body ->
                     RingPlot(ring, 30f, body.fillMaxWidth().padding(T.s2))
                 }
                 Spacer(Modifier.height(T.s3))
                 Panel(
-                    "TELEMETRY",
-                    status = { Mono(rcState.first, rcState.second) }
+                    "텔레메트리",
+                    status = { Status(rcState.first, rcState.second) }
                 ) { _ ->
                     Column(Modifier.padding(start = T.s4, end = T.s4, bottom = T.s3)) {
                         Label("RC · i-BUS")
@@ -335,7 +339,7 @@ private fun Bridge() {
                         Spacer(Modifier.height(T.s4))
                         Label("CAN")
                         Spacer(Modifier.height(T.s1))
-                        Mono(canState)
+                        Status(canState)
                     }
                 }
             }
@@ -343,7 +347,7 @@ private fun Bridge() {
 
         Spacer(Modifier.height(T.s3))
 
-        Panel("TELEOP", status = { Mono(tlState.first, tlState.second) }) { _ ->
+        Panel("조작", status = { Status(tlState.first, tlState.second) }) { _ ->
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -363,9 +367,9 @@ private fun Bridge() {
                 ) {
                     Chip(
                         if (armed) "DISARM" else "ARM",
-                        Modifier.width(190.dp),
-                        fill = if (armed) T.good else T.surfaceHi,
-                        fg = if (armed) T.bg else T.text,
+                        Modifier.width(200.dp),
+                        emph = Emph.Filled,
+                        colour = if (armed) T.bad else T.accent,
                         big = true
                     ) { armed = !armed }
                     Spacer(Modifier.height(T.s2))
