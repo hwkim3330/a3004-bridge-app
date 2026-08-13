@@ -3,7 +3,8 @@ package re.keti.a3004bridge
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -13,26 +14,42 @@ import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONObject
+import re.keti.a3004bridge.D.badge
+import re.keti.a3004bridge.D.caption
+import re.keti.a3004bridge.D.dp
+import re.keti.a3004bridge.D.label
+import re.keti.a3004bridge.D.mono
+import re.keti.a3004bridge.D.panel
+import re.keti.a3004bridge.D.pill
+import re.keti.a3004bridge.D.roundRect
+import re.keti.a3004bridge.D.tappable
+import re.keti.a3004bridge.D.value
+import re.keti.a3004bridge.D.withAlpha
 
 /**
- * One screen: camera, lidar ring, microphone, RC and CAN telemetry, and a
- * joystick that can drive something.
+ * One screen: camera, lidar ring, microphone, RC and CAN telemetry, and the
+ * controls that can drive something.
  *
- * Built with plain views rather than a UI framework because every panel here is
- * either a bitmap or a custom canvas, and neither benefits from one.
+ * Plain views rather than a UI framework, because every panel here is either a
+ * bitmap or a custom canvas and neither benefits from one. The visual language
+ * lives in Design.kt so the decisions are made once.
+ *
+ * The layout assumes a tablet held in two hands: the camera is the largest thing
+ * and sits where the eyes go, and the two controls are in the bottom corners
+ * where thumbs already are, with arming between them so it cannot be hit by the
+ * hand that is steering.
  *
  * The camera, lidar and control paths deliberately differ from the web
  * dashboard's:
  *   - the ring arrives as the binary UDP datagram, not polled JSON
- *   - audio goes through AudioTrack with a ~40 ms buffer instead of a browser's
- *     jitter buffer
+ *   - audio goes through AudioTrack with a ~40 ms buffer, not a browser's
  *   - control is UDP at 50 Hz, so there is no connection to exhaust
  */
 class MainActivity : AppCompatActivity() {
@@ -40,17 +57,19 @@ class MainActivity : AppCompatActivity() {
     private val ui = Handler(Looper.getMainLooper())
 
     private lateinit var cam: ImageView
-    private lateinit var camState: TextView
+    private lateinit var camBadge: D.Badge
+    private lateinit var linkBadge: D.Badge
     private lateinit var ringView: RingView
-    private lateinit var ringState: TextView
+    private lateinit var ringStatus: TextView
     private lateinit var stick: JoystickView
     private lateinit var yaw: YawView
-    private lateinit var armBtn: Button
-    private lateinit var tlState: TextView
-    private lateinit var micBtn: Button
-    private lateinit var micState: TextView
-    private lateinit var rcState: TextView
-    private lateinit var canState: TextView
+    private lateinit var armBtn: TextView
+    private lateinit var armHint: TextView
+    private lateinit var tlStatus: TextView
+    private lateinit var micBtn: TextView
+    private lateinit var micStatus: TextView
+    private lateinit var rcStatus: TextView
+    private lateinit var canStatus: TextView
     private lateinit var hostEdit: EditText
     private val bars = ArrayList<BarView>()
 
@@ -77,230 +96,243 @@ class MainActivity : AppCompatActivity() {
 
     // ------------------------------------------------------------------ layout
 
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-
-    private fun panel(title: String): Pair<LinearLayout, TextView> {
-        val head = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-        }
-        val t = TextView(this).apply {
-            text = title
-            setTextColor(Color.parseColor("#8695ab"))
-            textSize = 11f
-            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
-        }
-        val s = TextView(this).apply {
-            setTextColor(Color.parseColor("#8695ab"))
-            textSize = 11f
-            gravity = Gravity.END
-        }
-        head.addView(t); head.addView(s)
-
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#141922"))
-            addView(head)
-        }
-        return box to s
-    }
-
-    @SuppressLint("SetTextI18n")
     private fun buildUi(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#0b0e13"))
+            setBackgroundColor(D.bg)
+            setPadding(dp(D.s4), dp(D.s3), dp(D.s4), dp(D.s4))
         }
 
-        // --- header with the router address ---
-        val bar = LinearLayout(this).apply {
+        root.addView(topBar(), lp(MATCH_PARENT, WRAP_CONTENT))
+
+        // Camera left, sensors right. The camera gets the larger share because it
+        // is the thing being looked at; the ring is glanced at.
+        val mid = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        mid.addView(cameraPanel(), lp(0, MATCH_PARENT, 1.55f).apply { rightMargin = dp(D.s3) })
+        mid.addView(sensorColumn(), lp(0, MATCH_PARENT, 1f))
+        root.addView(mid, lp(MATCH_PARENT, 0, 1f).apply { topMargin = dp(D.s3) })
+
+        root.addView(controlBar(), lp(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(D.s3) })
+        return root
+    }
+
+    private fun lp(w: Int, h: Int, weight: Float = 0f) =
+        LinearLayout.LayoutParams(w, h, weight)
+
+    /** Title, live-link badge, and the router address. */
+    private fun topBar(): View {
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            setBackgroundColor(Color.parseColor("#141922"))
         }
-        bar.addView(TextView(this).apply {
+        row.addView(TextView(this).apply {
             text = "A3004 Bridge"
-            setTextColor(Color.parseColor("#e6ecf5"))
-            textSize = 15f
+            setTextColor(D.text)
+            textSize = 19f
+            letterSpacing = -0.01f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         })
+        linkBadge = badge()
+        linkBadge.set("연결 중", D.textFaint)
+        row.addView(linkBadge.root, lp(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = dp(D.s3) })
+
+        row.addView(View(this), lp(0, 1, 1f))     // spacer
+
         hostEdit = EditText(this).apply {
             setText(host)
             inputType = InputType.TYPE_CLASS_TEXT
-            setTextColor(Color.parseColor("#e6ecf5"))
+            setTextColor(D.text)
             textSize = 13f
-            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
-                .apply { leftMargin = dp(12) }
+            typeface = Typeface.MONOSPACE
+            background = roundRect(D.surfaceHi, D.rSm, D.hairline)
+            setPadding(dp(D.s3), dp(D.s2), dp(D.s3), dp(D.s2))
+            gravity = Gravity.CENTER_VERTICAL
         }
-        bar.addView(hostEdit)
-        bar.addView(Button(this).apply {
-            text = "연결"
-            setOnClickListener {
-                host = hostEdit.text.toString().trim().ifEmpty { "192.168.1.1" }
-                getSharedPreferences("cfg", Context.MODE_PRIVATE).edit()
-                    .putString("host", host).apply()
-                connect()
-            }
-        })
-        root.addView(bar)
+        row.addView(hostEdit, lp(dp(150), WRAP_CONTENT))
 
-        // --- camera + lidar side by side ---
-        val top = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 3f)
-        }
+        row.addView(button("연결") {
+            host = hostEdit.text.toString().trim().ifEmpty { "192.168.1.1" }
+            getSharedPreferences("cfg", Context.MODE_PRIVATE).edit()
+                .putString("host", host).apply()
+            connect()
+        }, lp(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = dp(D.s2) })
+        return row
+    }
 
-        val (camBox, camS) = panel("USB CAMERA")
-        camState = camS
+    /** A text button that looks like a control rather than a system default. */
+    private fun button(text: String, onTap: () -> Unit): TextView = TextView(this).apply {
+        this.text = text
+        setTextColor(D.text)
+        textSize = 13f
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        gravity = Gravity.CENTER
+        setPadding(dp(D.s4), dp(D.s2), dp(D.s4), dp(D.s2))
+        background = tappable(roundRect(D.surfaceHi, D.rSm, D.hairline))
+        isClickable = true
+        setOnClickListener { onTap() }
+    }
+
+    private fun cameraPanel(): View {
+        val p = panel("USB CAMERA")
+        p.fillBody()
+        camBadge = badge()
+        camBadge.set("대기", D.textFaint)
+        // The badge belongs beside the label, so it replaces the plain status slot.
+        (p.status.parent as LinearLayout).addView(
+            camBadge.root, lp(WRAP_CONTENT, WRAP_CONTENT))
+
         cam = ImageView(this).apply {
-            setBackgroundColor(Color.BLACK)
+            setBackgroundColor(D.bg)
             scaleType = ImageView.ScaleType.FIT_CENTER
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f)
         }
-        camBox.addView(cam)
-        val camCtl = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(4), dp(10), dp(6))
+        val frame = LinearLayout(this).apply {
+            background = roundRect(D.bg, D.rSm, D.hairline)
+            clipToOutline = true
+            addView(cam, lp(MATCH_PARENT, MATCH_PARENT))
         }
-        micBtn = Button(this).apply {
-            text = "🎤 마이크"
-            setOnClickListener { toggleMic() }
-        }
-        micState = TextView(this).apply {
-            setTextColor(Color.parseColor("#8695ab")); textSize = 11f
-            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
-                .apply { leftMargin = dp(8) }
-        }
-        camCtl.addView(micBtn); camCtl.addView(micState)
-        camBox.addView(camCtl)
-        camBox.layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 1f)
-            .apply { rightMargin = dp(6) }
-        top.addView(camBox)
-
-        val (ringBox, ringS) = panel("LIDAR RANGE RING")
-        ringState = ringS
-        ringView = RingView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f)
-        }
-        ringBox.addView(ringView)
-        ringBox.layoutParams = LinearLayout.LayoutParams(0, MATCH_PARENT, 1f)
-        top.addView(ringBox)
-        root.addView(top)
-
-        // --- teleop ---
-        val (tlBox, tlS) = panel("TELEOP")
-        tlState = tlS
-        val tlRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(4), dp(12), dp(10))
-        }
-        stick = JoystickView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(150), dp(150))
-            onMove = { x, y ->
-                teleop?.x = x
-                teleop?.y = y
-            }
-        }
-        tlRow.addView(stick)
-
-        // A separate rotation control, because the vehicle is holonomic: mecanum
-        // wheels make translation and yaw independent, and a single two-axis
-        // stick cannot express both.
-        yaw = YawView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(150), dp(56))
-                .apply { leftMargin = dp(12) }
-            onMove = { r -> teleop?.r = r }
-        }
-        tlRow.addView(yaw)
-        val tlSide = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), 0, 0, 0)
-            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
-        }
-        armBtn = Button(this).apply {
-            text = "ARM"
-            // Wide enough to hit without looking, not so wide it reads as a
-            // banner: the default weight made it span the whole panel.
-            layoutParams = LinearLayout.LayoutParams(dp(150), WRAP_CONTENT)
-            setOnClickListener { setArmed(teleop?.armed != true) }
-        }
-        tlSide.addView(armBtn)
-        tlSide.addView(TextView(this).apply {
-            text = "왼쪽: 전후·좌우 이동 (메카넘). 오른쪽: 회전.\n" +
-                   "손을 떼면 중립, 300 ms 끊기면 데드맨이 해제합니다."
-            setTextColor(Color.parseColor("#8695ab")); textSize = 11f
-            setPadding(0, dp(6), 0, 0)
+        p.body.addView(frame, lp(MATCH_PARENT, 0, 1f).apply {
+            leftMargin = dp(D.s3); rightMargin = dp(D.s3)
         })
-        tlRow.addView(tlSide)
-        tlBox.addView(tlRow)
-        tlBox.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
-            .apply { topMargin = dp(6) }
-        root.addView(tlBox)
 
-        // --- RC channels ---
-        val (rcBox, rcS) = panel("RC (i-BUS)")
-        rcState = rcS
-        val grid = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), 0, dp(12), dp(8))
+        micStatus = mono(size = 11f)
+        micBtn = button("마이크 켜기") { toggleMic() }
+        val ctl = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(D.s3), dp(D.s3), dp(D.s3), dp(D.s3))
+            addView(micBtn, lp(WRAP_CONTENT, WRAP_CONTENT))
+            addView(micStatus, lp(0, WRAP_CONTENT, 1f).apply { leftMargin = dp(D.s3) })
         }
+        p.body.addView(ctl, lp(MATCH_PARENT, WRAP_CONTENT))
+        return p.root
+    }
+
+    private fun sensorColumn(): View {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        val lidar = panel("LIDAR RANGE RING")
+        lidar.fillBody()
+        ringStatus = lidar.status
+        ringView = RingView(this)
+        lidar.body.addView(ringView, lp(MATCH_PARENT, 0, 1f).apply {
+            leftMargin = dp(D.s2); rightMargin = dp(D.s2); bottomMargin = dp(D.s2)
+        })
+        col.addView(lidar.root, lp(MATCH_PARENT, 0, 1f))
+
+        // RC and CAN are read-only telemetry, so they share one panel and stay
+        // visually quieter than anything interactive.
+        val tele = panel("TELEMETRY")
+        rcStatus = tele.status
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(D.s4), 0, dp(D.s4), dp(D.s3))
+        }
+        body.addView(label("RC · i-BUS"), lp(MATCH_PARENT, WRAP_CONTENT))
+        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         var row: LinearLayout? = null
         for (i in 0 until 14) {
             if (i % 7 == 0) {
-                row = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                }
-                grid.addView(row)
+                row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                grid.addView(row, lp(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(D.s1) })
             }
-            val cell = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
-                    .apply { rightMargin = dp(6) }
-            }
-            cell.addView(TextView(this).apply {
-                text = "${i + 1}"
-                setTextColor(Color.parseColor("#8695ab")); textSize = 10f
-                width = dp(18)
-            })
-            val b = BarView(this).apply {
-                layoutParams = LinearLayout.LayoutParams(0, dp(8), 1f)
-            }
+            val b = BarView(this)
             bars.add(b)
-            cell.addView(b)
-            row!!.addView(cell)
+            row!!.addView(b, lp(0, dp(6), 1f).apply { rightMargin = dp(D.s1) })
         }
-        rcBox.addView(grid)
-        rcBox.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
-            .apply { topMargin = dp(6) }
-        root.addView(rcBox)
+        body.addView(grid, lp(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(D.s2) })
 
-        // --- CAN ---
-        val (canBox, canS) = panel("CAN")
-        canState = canS
-        canBox.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
-            .apply { topMargin = dp(6) }
-        root.addView(canBox)
+        body.addView(label("CAN"), lp(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(D.s4) })
+        canStatus = mono("대기", size = 11f)
+        body.addView(canStatus, lp(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(D.s1) })
 
-        return root
+        tele.body.addView(body, lp(MATCH_PARENT, WRAP_CONTENT))
+        col.addView(tele.root, lp(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(D.s3) })
+        return col
     }
+
+    /**
+     * Translate on the left, rotate on the right, arm in the middle.
+     *
+     * The vehicle is a SCOUT MINI Omni: mecanum wheels, so translation and
+     * rotation are independent and one two-axis stick cannot express both.
+     */
+    private fun controlBar(): View {
+        val p = panel("TELEOP")
+        tlStatus = p.status
+
+        stick = JoystickView(this).apply {
+            onMove = { x, y -> teleop?.x = x; teleop?.y = y }
+        }
+        yaw = YawView(this).apply {
+            onMove = { r -> teleop?.r = r }
+        }
+
+        armBtn = TextView(this).apply {
+            textSize = 17f
+            gravity = Gravity.CENTER
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            letterSpacing = 0.08f
+            isClickable = true
+            setPadding(dp(D.s5), dp(D.s4), dp(D.s5), dp(D.s4))
+            setOnClickListener { setArmed(teleop?.armed != true) }
+        }
+        armHint = caption(
+            "손을 떼면 중립. 300 ms 끊기면 데드맨이 해제합니다."
+        ).apply { gravity = Gravity.CENTER }
+
+        val centre = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            addView(armBtn, lp(dp(190), WRAP_CONTENT))
+            addView(armHint, lp(dp(320), WRAP_CONTENT).apply { topMargin = dp(D.s2) })
+        }
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(D.s4), dp(D.s2), dp(D.s4), dp(D.s4))
+            addView(stickCell("이동", stick, dp(132), dp(132)), lp(WRAP_CONTENT, WRAP_CONTENT))
+            addView(centre, lp(0, WRAP_CONTENT, 1f))
+            addView(stickCell("회전", yaw, dp(150), dp(56)), lp(WRAP_CONTENT, WRAP_CONTENT))
+        }
+        p.body.addView(row, lp(MATCH_PARENT, WRAP_CONTENT))
+        return p.root
+    }
+
+    private fun stickCell(name: String, v: View, w: Int, h: Int): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(v, lp(w, h))
+            addView(label(name), lp(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(D.s2) })
+        }
 
     // ----------------------------------------------------------------- wiring
 
     private fun connect() {
         disconnect()
+        linkBadge.set("연결 중", D.warn)
 
         mjpeg = MjpegReader("http://$host:8080/stream",
-            onFrame = { bmp: Bitmap -> ui.post { cam.setImageBitmap(bmp) } },
-            onState = { s -> ui.post { camState.text = s } }).also { it.start() }
+            onFrame = { bmp: Bitmap ->
+                ui.post {
+                    cam.setImageBitmap(bmp)
+                    camBadge.set("live", D.good)
+                    linkBadge.set(host, D.good)
+                }
+            },
+            onState = { s -> ui.post { camBadge.set(s, D.bad) } }).also { it.start() }
 
         ringRx = RingReader(7602,
-            onRing = { r -> ui.post { ringView.ring = r
-                ringState.text = "${r.sectors} sectors · frame ${r.frameId}" +
-                        if (r.alarm) " · ZONE" else "" } },
-            onState = { s -> ui.post { ringState.text = s } }).also { it.start() }
+            onRing = { r ->
+                ui.post {
+                    ringView.ring = r
+                    ringStatus.text = "${r.sectors} sectors · frame ${r.frameId}" +
+                            if (r.alarm) "  ZONE" else ""
+                    ringStatus.setTextColor(if (r.alarm) D.bad else D.textDim)
+                }
+            },
+            onState = { s -> ui.post { ringStatus.text = s } }).also { it.start() }
 
         teleop = TeleopSender(host, 7721, 50).also { it.start() }
         setArmed(false)
@@ -318,35 +350,48 @@ class MainActivity : AppCompatActivity() {
         status?.halt(); status = null
     }
 
+    /**
+     * Arming is the one place the interface changes colour wholesale, because it
+     * is the one place where a mistaken tap moves a vehicle.
+     */
+    @SuppressLint("SetTextI18n")
     private fun setArmed(on: Boolean) {
         teleop?.armed = on
         stick.armed = on
         yaw.armed = on
         armBtn.text = if (on) "DISARM" else "ARM"
+        armBtn.setTextColor(if (on) D.bg else D.text)
+        armBtn.background = tappable(
+            roundRect(if (on) D.good else D.surfaceHi, D.rLg,
+                if (on) 0 else D.hairline),
+            if (on) D.bad else D.accent)
+        armHint.setTextColor(if (on) D.good else D.textDim)
     }
 
+    @SuppressLint("SetTextI18n")
     private fun toggleMic() {
         val p = pcm
         if (p != null) {
             p.halt(); pcm = null
-            micBtn.text = "🎤 마이크"
-            micState.text = ""
+            micBtn.text = "마이크 켜기"
+            micStatus.text = ""
             return
         }
         pcm = PcmPlayer("http://$host:8082",
-            onLevel = { /* level is drawn by the button tint only */ },
-            onState = { s -> ui.post { micState.text = s } }).also { it.start() }
-        micBtn.text = "🎤 끄기"
+            onLevel = { },
+            onState = { s -> ui.post { micStatus.text = s } }).also { it.start() }
+        micBtn.text = "마이크 끄기"
     }
 
     @SuppressLint("SetTextI18n")
     private fun onStatus(name: String, j: JSONObject?) {
         when (name) {
             "rc" -> {
-                if (j == null) { rcState.text = "없음"; return }
+                if (j == null) { rcStatus.text = "rc 없음"; return }
                 val link = j.optBoolean("link") && j.optLong("age_ms") < 1000
-                rcState.text = (if (link) "link ok" else "LINK LOST") +
-                        " · ${j.optLong("frames")} frames"
+                rcStatus.text = (if (link) "link ok" else "LINK LOST") +
+                        " · ${j.optLong("frames")}"
+                rcStatus.setTextColor(if (link) D.textDim else D.bad)
                 val ch = j.optJSONArray("channels") ?: return
                 for (i in bars.indices) {
                     if (i < ch.length()) {
@@ -356,34 +401,29 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             "can" -> {
-                if (j == null) { canState.text = "없음"; return }
+                if (j == null) { canStatus.text = "can 없음"; return }
                 val frames = j.optJSONObject("frames")
-                val n = frames?.length() ?: 0
-                canState.text = "${j.optString("interface")} · rx ${j.optLong("rx")}" +
-                        " · $n ids" +
+                canStatus.text = "${j.optString("interface")} · rx ${j.optLong("rx")}" +
+                        " · ${frames?.length() ?: 0} ids" +
                         if (j.optBoolean("inject_allowed")) " · INJECT" else " · read-only"
             }
             "teleop" -> {
-                if (j == null) { tlState.text = "teleop 없음"; return }
+                if (j == null) { tlStatus.text = "teleop 없음"; return }
                 val armed = j.optBoolean("armed")
-                // If the daemon disarmed underneath us, reflect it. Unlike the
-                // web page this cannot race a stale snapshot, because arming
-                // here is continuous rather than a one-shot request.
+                // If the daemon disarmed underneath us, reflect it. Unlike the web
+                // page this cannot race a stale snapshot, because arming here is
+                // continuous rather than a one-shot request.
                 if (!armed && teleop?.armed == true &&
                     j.optLong("age_ms") >= j.optLong("timeout_ms", 300)) {
                     setArmed(false)
                 }
-                tlState.text = (if (armed) "ARMED" else "disarmed") +
-                        " · ${j.optInt("rate_hz")} Hz" +
-                        (if (j.optBoolean("forwarding")) " · forwarding"
-                         else " · not forwarding") +
-                        " · udp ${j.optLong("udp_commands")}"
+                tlStatus.text = (if (armed) "ARMED" else "disarmed") +
+                        " · ${j.optInt("rate_hz")} Hz · udp ${j.optLong("udp_commands")}"
+                tlStatus.setTextColor(if (armed) D.good else D.textDim)
             }
             "ouster" -> {
-                // The ring itself comes over UDP; this is only for the header.
                 if (j != null && ringView.ring == null) {
-                    ringState.text = "${j.optInt("channels")}ch · " +
-                            j.optString("profile")
+                    ringStatus.text = "${j.optInt("channels")}ch · " + j.optString("profile")
                 }
             }
         }
@@ -391,8 +431,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        // Leaving the app must not leave something armed. The deadman would
-        // catch it, but not relying on the deadman is the point.
+        // Leaving the app must not leave something armed. The deadman would catch
+        // it, but not relying on the deadman is the point.
         setArmed(false)
     }
 
