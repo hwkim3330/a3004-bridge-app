@@ -83,14 +83,22 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(saved: Bundle?) {
         super.onCreate(saved)
-        // Driving something while the screen sleeps is not a thing we want to
-        // make possible.
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         host = getSharedPreferences("cfg", Context.MODE_PRIVATE)
             .getString("host", "192.168.1.1") ?: "192.168.1.1"
 
         setContentView(buildUi())
+    }
+
+    /**
+     * Streams live for as long as the screen shows them, and not a moment
+     * longer. onResume/onPause rather than onCreate/onDestroy because a
+     * backgrounded app was still pulling 720p, decoding every frame, playing
+     * audio and sending 50 control datagrams a second - all of it invisible, and
+     * all of it out of the tablet's battery.
+     */
+    override fun onResume() {
+        super.onResume()
         connect()
     }
 
@@ -372,6 +380,16 @@ class MainActivity : AppCompatActivity() {
         teleop?.armed = on
         stick.armed = on
         yaw.armed = on
+        // Awake only while armed. Driving something while the screen sleeps must
+        // not be possible, but holding the backlight on through an idle shift is
+        // just a flat battery when it is needed.
+        if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // 50 Hz is for steering. Disarmed there is nothing to steer, and the
+        // daemon only needs enough traffic to know the app is still there.
+        teleop?.hz = if (on) 50 else 5
+
         armBtn.text = if (on) "DISARM" else "ARM"
         armBtn.setTextColor(if (on) D.bg else D.text)
         armBtn.background = tappable(
@@ -447,6 +465,7 @@ class MainActivity : AppCompatActivity() {
         // Leaving the app must not leave something armed. The deadman would catch
         // it, but not relying on the deadman is the point.
         setArmed(false)
+        disconnect()
     }
 
     override fun onDestroy() {

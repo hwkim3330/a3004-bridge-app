@@ -279,7 +279,9 @@ class RingReader(
 class TeleopSender(
     private val host: String,
     private val port: Int,
-    private val hz: Int = 50,
+    /* Mutable and volatile: the activity drops this to a keepalive rate when
+       disarmed, so it has to be read on every pass rather than captured once. */
+    @Volatile var hz: Int = 50,
 ) : Thread("teleop") {
 
     private val stop = AtomicBoolean(false)
@@ -297,11 +299,10 @@ class TeleopSender(
     override fun run() {
         val sock = DatagramSocket()
         val addr = runCatching { InetAddress.getByName(host) }.getOrNull() ?: return
-        val period = (1000L / hz).coerceAtLeast(5L)
         try {
             while (!stop.get()) {
                 send(sock, addr, armed)
-                sleepQuietly(period)
+                sleepQuietly((1000L / hz.coerceAtLeast(1)).coerceAtLeast(5L))
             }
         } finally {
             runCatching { send(sock, addr, false) }   // final disarmed frame
