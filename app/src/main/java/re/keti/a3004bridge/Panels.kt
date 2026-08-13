@@ -1,0 +1,280 @@
+package re.keti.a3004bridge
+
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.min
+import kotlin.math.sin
+
+/**
+ * The drawn surfaces.
+ *
+ * Each is a continuous quantity - a range, a deflection, a pulse width - which is
+ * why they are drawn rather than composed out of widgets. They take their colours
+ * from T so a change to the palette reaches them too.
+ */
+
+private const val TAU = (Math.PI * 2).toFloat()
+
+/** Polar plot of the lidar range ring. */
+@Composable
+fun RingPlot(ring: Ring?, maxRange: Float = 30f, modifier: Modifier = Modifier) {
+    val tm = rememberTextMeasurer()
+    Canvas(modifier) {
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val r = min(size.width, size.height) * 0.44f
+
+        // Never more than about six rings: past that they stop being reference
+        // marks and become texture.
+        val step = when {
+            maxRange <= 10f -> 2
+            maxRange <= 30f -> 5
+            maxRange <= 60f -> 10
+            else -> 20
+        }
+        var m = step
+        var idx = 0
+        while (m <= maxRange) {
+            val rr = r * m / maxRange
+            drawCircle(T.text.copy(alpha = 0.07f), rr, Offset(cx, cy),
+                style = Stroke(1f))
+            // Labels on a diagonal, every other ring. Stacked up the vertical
+            // axis they read as a list rather than as marks on their own rings.
+            if (idx % 2 == 1 || m + step > maxRange) {
+                val a = -TAU / 8f
+                label(tm, "${m}m",
+                    Offset(cx + cos(a) * rr + 3f, cy + sin(a) * rr - 12f))
+            }
+            m += step; idx++
+        }
+        drawLine(T.text.copy(alpha = 0.05f), Offset(cx - r, cy), Offset(cx + r, cy))
+        drawLine(T.text.copy(alpha = 0.05f), Offset(cx, cy - r), Offset(cx, cy + r))
+
+        if (ring == null) {
+            val t = tm.measure("lidar 데이터 없음",
+                TextStyle(color = T.textFaint, fontSize = 12.sp))
+            // Clamped inside: r comes from the shorter side, so on a wide, short
+            // panel cy + r already sits past the bottom edge.
+            val y = min(cy + r + 20f, size.height - t.size.height - 2f)
+            drawText(t, topLeft = Offset(cx - t.size.width / 2f, y))
+            return@Canvas
+        }
+
+        val n = ring.sectors
+        val dotR = maxOf(2f, (r * TAU / n) * 0.40f)
+        for (i in 0 until n) {
+            val v = ring.cm[i]
+            if (v < 0) continue
+            val metres = v / 100f
+            if (metres > maxRange) continue
+            // sector 0 points up, azimuth increases clockwise
+            val a = (i.toFloat() / n) * TAU - TAU / 4f
+            val rr = r * metres / maxRange
+            // Near is warm, far is cool: something approaching reads before it
+            // is consciously measured.
+            val f = (metres / maxRange).coerceIn(0f, 1f)
+            drawCircle(hsv(10f + f * 200f, 0.72f, 1f), dotR,
+                Offset(cx + cos(a) * rr, cy + sin(a) * rr))
+        }
+        drawCircle(T.accent.copy(alpha = 0.18f), 7f, Offset(cx, cy))
+        drawCircle(T.accent, 2.5f, Offset(cx, cy))
+    }
+}
+
+private fun DrawScope.label(tm: TextMeasurer, s: String, at: Offset) {
+    drawText(tm.measure(s, TextStyle(color = T.textFaint, fontSize = 9.sp)),
+        topLeft = at)
+}
+
+/** Cheap HSV, so the ring can colour by distance without a bitmap lookup. */
+private fun hsv(h: Float, s: Float, v: Float): Color {
+    val c = v * s
+    val hp = (h % 360f) / 60f
+    val x = c * (1f - kotlin.math.abs(hp % 2f - 1f))
+    val (r, g, b) = when (hp.toInt()) {
+        0 -> Triple(c, x, 0f)
+        1 -> Triple(x, c, 0f)
+        2 -> Triple(0f, c, x)
+        3 -> Triple(0f, x, c)
+        4 -> Triple(x, 0f, c)
+        else -> Triple(c, 0f, x)
+    }
+    val m = v - c
+    return Color(r + m, g + m, b + m)
+}
+
+/**
+ * Two-axis stick. Reports normalised x/y with up as positive y.
+ *
+ * Releasing always re-centres, and that is not a convenience: a stick that keeps
+ * its deflection after your finger leaves is a stuck throttle. The gesture is
+ * handled with awaitEachGesture rather than detectDragGestures because a press
+ * with no movement still has to command - a driver holding a steady offset is not
+ * dragging.
+ */
+@Composable
+fun Joystick(
+    armed: Boolean,
+    modifier: Modifier = Modifier,
+    onMove: (Float, Float) -> Unit,
+) {
+    var knob by remember { mutableStateOf(Offset.Zero) }
+    var held by remember { mutableStateOf(false) }
+
+    Canvas(
+        modifier.pointerInput(Unit) {
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                held = true
+                fun report(p: Offset) {
+                    val c = Offset(size.width / 2f, size.height / 2f)
+                    val r = min(size.width, size.height) / 2f * 0.96f
+                    val lim = r - r * 0.30f
+                    var d = p - c
+                    val len = hypot(d.x, d.y)
+                    if (len > lim) d *= lim / len
+                    knob = d
+                    onMove(d.x / lim, -d.y / lim)
+                }
+                report(down.position)
+                while (true) {
+                    val ev = awaitPointerEvent()
+                    val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                    if (!ch.pressed) break
+                    report(ch.position)
+                    ch.consume()
+                }
+                held = false
+                knob = Offset.Zero
+                onMove(0f, 0f)
+            }
+        }
+    ) {
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val r = min(size.width, size.height) / 2f * 0.96f
+        val knobR = r * 0.30f
+
+        drawCircle(T.surfaceHi, r, Offset(cx, cy))
+        drawCircle(T.hairline, r, Offset(cx, cy), style = Stroke(1f))
+        // The travel limit, so the dead area outside it is visible not just felt.
+        drawCircle(T.text.copy(alpha = 0.06f), r - knobR, Offset(cx, cy),
+            style = Stroke(1f))
+        drawLine(T.text.copy(alpha = 0.05f),
+            Offset(cx - r * 0.66f, cy), Offset(cx + r * 0.66f, cy))
+        drawLine(T.text.copy(alpha = 0.05f),
+            Offset(cx, cy - r * 0.66f), Offset(cx, cy + r * 0.66f))
+
+        val fill = if (armed) T.good else T.textFaint
+        val at = Offset(cx + knob.x, cy + knob.y)
+        drawCircle(fill.copy(alpha = if (held) 0.95f else 0.75f), knobR, at)
+        drawCircle(Color.White.copy(alpha = if (held) 0.30f else 0.14f), knobR, at,
+            style = Stroke(1f))
+    }
+}
+
+/**
+ * Horizontal-only stick for yaw.
+ *
+ * The vehicle is a SCOUT MINI Omni: mecanum wheels, so translation and rotation
+ * are independent, and putting yaw on the same two-axis stick as strafe would
+ * throw away a degree of freedom the machine has.
+ */
+@Composable
+fun YawSlider(
+    armed: Boolean,
+    modifier: Modifier = Modifier,
+    onMove: (Float) -> Unit,
+) {
+    var kx by remember { mutableStateOf(0f) }
+    var held by remember { mutableStateOf(false) }
+
+    Canvas(
+        modifier.pointerInput(Unit) {
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                held = true
+                fun report(p: Offset) {
+                    val knobR = size.height / 2f * 0.82f
+                    val lim = size.width / 2f - knobR - 2f
+                    kx = (p.x - size.width / 2f).coerceIn(-lim, lim)
+                    // right on screen is clockwise, negative yaw in REP-103
+                    onMove(-kx / lim)
+                }
+                report(down.position)
+                while (true) {
+                    val ev = awaitPointerEvent()
+                    val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                    if (!ch.pressed) break
+                    report(ch.position)
+                    ch.consume()
+                }
+                held = false
+                kx = 0f
+                onMove(0f)
+            }
+        }
+    ) {
+        val cy = size.height / 2f
+        val rad = size.height / 2f
+        val knobR = rad * 0.82f
+
+        drawRoundRect(T.surfaceHi, size = size,
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(rad, rad))
+        drawRoundRect(T.hairline, size = size,
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(rad, rad),
+            style = Stroke(1f))
+        // Centre detent: the only position meaning "not turning", so it is marked
+        // rather than inferred from where the knob happens to be.
+        drawRect(T.text.copy(alpha = 0.12f),
+            topLeft = Offset(size.width / 2f - 0.5f, size.height * 0.28f),
+            size = Size(1f, size.height * 0.44f))
+
+        val fill = if (armed) T.good else T.textFaint
+        val at = Offset(size.width / 2f + kx, cy)
+        drawCircle(fill.copy(alpha = if (held) 0.95f else 0.75f), knobR, at)
+        drawCircle(Color.White.copy(alpha = if (held) 0.30f else 0.14f), knobR, at,
+            style = Stroke(1f))
+    }
+}
+
+/** One RC channel, 1000..2000 microseconds. */
+@Composable
+fun ChannelBar(value: Int, live: Boolean, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val h = size.height
+        val rad = androidx.compose.ui.geometry.CornerRadius(h / 2f, h / 2f)
+
+        drawRoundRect(T.text.copy(alpha = 0.07f), size = size, cornerRadius = rad)
+        val frac = ((value - 1000) / 1000f).coerceIn(0f, 1f)
+        if (frac > 0f) {
+            drawRoundRect(if (live) T.accent else T.textFaint,
+                size = Size(size.width * frac, h), cornerRadius = rad)
+        }
+        // Centre mark: an RC channel at rest sits here, and the eye needs a
+        // reference for neutral that does not require reading a number.
+        drawRect(T.text.copy(alpha = 0.16f),
+            topLeft = Offset(size.width / 2f - 0.5f, 0f), size = Size(1f, h))
+    }
+}

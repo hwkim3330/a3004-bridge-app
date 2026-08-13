@@ -10,11 +10,15 @@
          route goes through a system dialog and needs neither. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!-- requestNetwork() needs this. Without it the call throws and the app
+         quietly falls back to asking the user to join the AP by hand, which is
+         the behaviour this whole path exists to avoid. -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <application
         android:label="A3004 Bridge"
         android:icon="@mipmap/ic_launcher"
-        android:theme="@style/Theme.AppCompat.NoActionBar"
+        android:theme="@style/Theme.A3004"
         android:usesCleartextTraffic="true"
         android:supportsRtl="true">
 

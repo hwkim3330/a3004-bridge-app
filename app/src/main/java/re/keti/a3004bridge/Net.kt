@@ -67,6 +67,41 @@ class MjpegReader(
         }
     }
 
+    /*
+     * Two decode targets, used alternately.
+     *
+     * A fresh 1280x720 ARGB bitmap per frame is 3.7 MB: 74 MB/s of allocation
+     * and collection at 20 fps, 220 MB/s at 60. inBitmap reuses the buffer
+     * instead, but the view still holds the frame it is drawing, so decoding
+     * into that one would tear the image. Hence two: decode into the buffer the
+     * UI is not showing.
+     */
+    private val slot = arrayOfNulls<Bitmap>(2)
+    private var next = 0
+
+    private fun decode(bytes: ByteArray): Bitmap? {
+        val o = BitmapFactory.Options().apply {
+            inMutable = true
+            inBitmap = slot[next]
+        }
+        val bmp = try {
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+        } catch (e: IllegalArgumentException) {
+            // The candidate was the wrong size - the stream's resolution
+            // changed. Drop it and let the next attempt allocate.
+            slot[next] = null
+            o.inBitmap = null
+            runCatching {
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+            }.getOrNull()
+        }
+        if (bmp != null) {
+            slot[next] = bmp
+            next = 1 - next
+        }
+        return bmp
+    }
+
     private fun readParts(ins: InputStream) {
         val buf = ByteArray(1 shl 15)
         val acc = ByteArrayOutputStream(1 shl 18)
@@ -89,8 +124,7 @@ class MjpegReader(
                     if (prev == 0xFF && b == 0xD9) {          // EOI
                         inFrame = false
                         val bytes = acc.toByteArray()
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                            ?.let(onFrame)
+                        decode(bytes)?.let(onFrame)
                         // A frame we cannot decode is not fatal; keep reading.
                     } else if (acc.size() > 4 shl 20) {
                         // Runaway: no EOI in 4 MB means the stream is not what
