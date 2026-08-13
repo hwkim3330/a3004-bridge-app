@@ -150,6 +150,19 @@ class MainActivity : AppCompatActivity() {
         }
         row.addView(hostEdit, lp(dp(150), WRAP_CONTENT))
 
+        row.addView(button("AP 접속") {
+            when (Wifi.join(this)) {
+                Wifi.Route.SYSTEM_DIALOG ->
+                    linkBadge.set("AP 저장 확인", D.warn)
+                Wifi.Route.SUGGESTION ->
+                    linkBadge.set("AP 제안됨", D.warn)
+                Wifi.Route.PICKER ->
+                    linkBadge.set("wifi 설정에서 선택", D.warn)
+                Wifi.Route.UNSUPPORTED ->
+                    linkBadge.set("wifi 열 수 없음", D.bad)
+            }
+        }, lp(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = dp(D.s2) })
+
         row.addView(button("연결") {
             host = hostEdit.text.toString().trim().ifEmpty { "192.168.1.1" }
             getSharedPreferences("cfg", Context.MODE_PRIVATE).edit()

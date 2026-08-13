@@ -4,6 +4,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Joining the router's own AP: the router is the network, so a tablet that
+         walks around with the vehicle has to be associated to it. ACCESS/CHANGE
+         WIFI_STATE are only needed for the API 29 suggestion path; the API 30+
+         route goes through a system dialog and needs neither. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
     <application
         android:label="A3004 Bridge"
