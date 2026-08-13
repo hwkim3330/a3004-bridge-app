@@ -283,9 +283,12 @@ class TeleopSender(
 ) : Thread("teleop") {
 
     private val stop = AtomicBoolean(false)
+    /* Axis map, shared with doc/TELEOP.md and the reference receiver:
+       a0 strafe (+right), a1 forward (+forward), a2 yaw (+anticlockwise). */
     @Volatile var armed = false
     @Volatile var x = 0f
     @Volatile var y = 0f
+    @Volatile var r = 0f
     @Volatile var sent = 0L
     private var seq = 0
 
@@ -321,6 +324,7 @@ class TeleopSender(
         // formatting agreeing across three languages.
         putAxis(p, 12, if (arm) x else 0f)
         putAxis(p, 14, if (arm) y else 0f)
+        putAxis(p, 16, if (arm) r else 0f)
         sock.send(DatagramPacket(p, p.size, addr, port))
         sent++
     }

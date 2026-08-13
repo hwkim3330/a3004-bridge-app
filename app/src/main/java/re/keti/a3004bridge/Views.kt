@@ -151,6 +151,68 @@ class JoystickView(ctx: Context, attrs: AttributeSet? = null) : View(ctx, attrs)
     }
 }
 
+/**
+ * Horizontal-only stick for yaw.
+ *
+ * The vehicle is a SCOUT MINI Omni: mecanum wheels, so translation and rotation
+ * are independent. Putting yaw on the same two-axis stick as strafe would throw
+ * away a degree of freedom the machine actually has.
+ */
+class YawView(ctx: Context, attrs: AttributeSet? = null) : View(ctx, attrs) {
+
+    var onMove: ((Float) -> Unit)? = null
+    var armed = false
+        set(v) { field = v; invalidate() }
+
+    private var kx = 0f
+
+    private val base = Paint().apply {
+        color = Color.parseColor("#10151d"); isAntiAlias = true
+    }
+    private val rim = Paint().apply {
+        color = Color.parseColor("#232b38"); style = Paint.Style.STROKE
+        strokeWidth = 3f; isAntiAlias = true
+    }
+    private val tick = Paint().apply { color = Color.parseColor("#3d4859") }
+    private val knob = Paint().apply { isAntiAlias = true }
+
+    private fun knobR() = height / 2f * 0.86f
+    private fun limit() = width / 2f - knobR()
+
+    override fun onDraw(c: Canvas) {
+        val cy = height / 2f
+        val r = height / 2f
+
+        c.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, base)
+        c.drawRoundRect(1.5f, 1.5f, width - 1.5f, height - 1.5f, r, r, rim)
+        c.drawRect(width / 2f - 1f, height * 0.15f,
+                   width / 2f + 1f, height * 0.85f, tick)
+
+        knob.color = if (armed) Color.parseColor("#34d399")
+                     else Color.parseColor("#2b3547")
+        c.drawCircle(width / 2f + kx, cy, knobR(), knob)
+    }
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
+                val lim = limit()
+                kx = (e.x - width / 2f).coerceIn(-lim, lim)
+                // right on screen is clockwise, which is negative yaw in REP-103
+                onMove?.invoke(-kx / lim)
+                invalidate()
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                kx = 0f
+                onMove?.invoke(0f)
+                invalidate()
+            }
+        }
+        return true
+    }
+}
+
 /** Horizontal bar for an RC channel, 1000..2000 microseconds. */
 class BarView(ctx: Context, attrs: AttributeSet? = null) : View(ctx, attrs) {
 

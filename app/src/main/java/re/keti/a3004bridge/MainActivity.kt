@@ -44,6 +44,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ringView: RingView
     private lateinit var ringState: TextView
     private lateinit var stick: JoystickView
+    private lateinit var yaw: YawView
     private lateinit var armBtn: Button
     private lateinit var tlState: TextView
     private lateinit var micBtn: Button
@@ -203,6 +204,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
         tlRow.addView(stick)
+
+        // A separate rotation control, because the vehicle is holonomic: mecanum
+        // wheels make translation and yaw independent, and a single two-axis
+        // stick cannot express both.
+        yaw = YawView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(150), dp(56))
+                .apply { leftMargin = dp(12) }
+            onMove = { r -> teleop?.r = r }
+        }
+        tlRow.addView(yaw)
         val tlSide = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), 0, 0, 0)
@@ -217,8 +228,8 @@ class MainActivity : AppCompatActivity() {
         }
         tlSide.addView(armBtn)
         tlSide.addView(TextView(this).apply {
-            text = "ARM 후 스틱을 밀면 명령이 나갑니다. 손을 떼면 중립,\n" +
-                   "300 ms 끊기면 데드맨이 해제합니다."
+            text = "왼쪽: 전후·좌우 이동 (메카넘). 오른쪽: 회전.\n" +
+                   "손을 떼면 중립, 300 ms 끊기면 데드맨이 해제합니다."
             setTextColor(Color.parseColor("#8695ab")); textSize = 11f
             setPadding(0, dp(6), 0, 0)
         })
@@ -310,6 +321,7 @@ class MainActivity : AppCompatActivity() {
     private fun setArmed(on: Boolean) {
         teleop?.armed = on
         stick.armed = on
+        yaw.armed = on
         armBtn.text = if (on) "DISARM" else "ARM"
     }
 
