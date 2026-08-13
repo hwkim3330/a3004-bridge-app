@@ -82,6 +82,7 @@ private fun Bridge() {
     }
     var hostEdit by remember { mutableStateOf(host) }
 
+
     /*
      * neverEqualPolicy, because the decoder reuses two bitmaps in rotation:
      * frame N and frame N+2 are the same object, and a structural comparison
@@ -266,7 +267,7 @@ private fun Bridge() {
                             .fillMaxWidth()
                             .padding(horizontal = T.s3)
                             .clip(T.rSm)
-                            .background(T.bg)
+                            .background(T.videoBg)
                             .border(1.dp, T.hairline, T.rSm),
                         contentAlignment = Alignment.Center
                     ) {

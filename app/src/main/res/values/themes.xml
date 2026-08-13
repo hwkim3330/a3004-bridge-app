@@ -1,14 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      A platform theme, not an AppCompat one: the UI is Compose, so the XML
-      theme's only job is to hand over a black window with no action bar and get
-      out of the way. Anything else here would be a second place where colour
-      decisions live.
+      A platform theme, not an AppCompat one: the UI is Compose, so this exists
+      only to hand over a window of the right colour with no action bar. The
+      light status/navigation bar flags matter - on a light background the system
+      icons have to be dark or they vanish.
     -->
-    <style name="Theme.A3004" parent="@android:style/Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#0A0C10</item>
-        <item name="android:statusBarColor">#0A0C10</item>
-        <item name="android:navigationBarColor">#0A0C10</item>
+    <style name="Theme.A3004" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#F2F2F7</item>
+        <item name="android:statusBarColor">#F2F2F7</item>
+        <item name="android:navigationBarColor">#F2F2F7</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 </resources>

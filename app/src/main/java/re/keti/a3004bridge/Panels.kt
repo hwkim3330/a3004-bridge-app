@@ -57,7 +57,7 @@ fun RingPlot(ring: Ring?, maxRange: Float = 30f, modifier: Modifier = Modifier) 
         var idx = 0
         while (m <= maxRange) {
             val rr = r * m / maxRange
-            drawCircle(T.text.copy(alpha = 0.07f), rr, Offset(cx, cy),
+            drawCircle(T.gridStrong, rr, Offset(cx, cy),
                 style = Stroke(1f))
             // Labels on a diagonal, every other ring. Stacked up the vertical
             // axis they read as a list rather than as marks on their own rings.
@@ -68,8 +68,8 @@ fun RingPlot(ring: Ring?, maxRange: Float = 30f, modifier: Modifier = Modifier) 
             }
             m += step; idx++
         }
-        drawLine(T.text.copy(alpha = 0.05f), Offset(cx - r, cy), Offset(cx + r, cy))
-        drawLine(T.text.copy(alpha = 0.05f), Offset(cx, cy - r), Offset(cx, cy + r))
+        drawLine(T.gridWeak, Offset(cx - r, cy), Offset(cx + r, cy))
+        drawLine(T.gridWeak, Offset(cx, cy - r), Offset(cx, cy + r))
 
         if (ring == null) {
             val t = tm.measure("lidar 데이터 없음",
@@ -179,17 +179,17 @@ fun Joystick(
         drawCircle(T.surfaceHi, r, Offset(cx, cy))
         drawCircle(T.hairline, r, Offset(cx, cy), style = Stroke(1f))
         // The travel limit, so the dead area outside it is visible not just felt.
-        drawCircle(T.text.copy(alpha = 0.06f), r - knobR, Offset(cx, cy),
+        drawCircle(T.gridStrong, r - knobR, Offset(cx, cy),
             style = Stroke(1f))
-        drawLine(T.text.copy(alpha = 0.05f),
+        drawLine(T.gridWeak,
             Offset(cx - r * 0.66f, cy), Offset(cx + r * 0.66f, cy))
-        drawLine(T.text.copy(alpha = 0.05f),
+        drawLine(T.gridWeak,
             Offset(cx, cy - r * 0.66f), Offset(cx, cy + r * 0.66f))
 
-        val fill = if (armed) T.good else T.textFaint
+        val fill = if (armed) T.good else T.textDim
         val at = Offset(cx + knob.x, cy + knob.y)
         drawCircle(fill.copy(alpha = if (held) 0.95f else 0.75f), knobR, at)
-        drawCircle(Color.White.copy(alpha = if (held) 0.30f else 0.14f), knobR, at,
+        drawCircle(Color.Black.copy(alpha = if (held) 0.22f else 0.10f), knobR, at,
             style = Stroke(1f))
     }
 }
@@ -247,14 +247,14 @@ fun YawSlider(
             style = Stroke(1f))
         // Centre detent: the only position meaning "not turning", so it is marked
         // rather than inferred from where the knob happens to be.
-        drawRect(T.text.copy(alpha = 0.12f),
+        drawRect(T.trackIdle,
             topLeft = Offset(size.width / 2f - 0.5f, size.height * 0.28f),
             size = Size(1f, size.height * 0.44f))
 
-        val fill = if (armed) T.good else T.textFaint
+        val fill = if (armed) T.good else T.textDim
         val at = Offset(size.width / 2f + kx, cy)
         drawCircle(fill.copy(alpha = if (held) 0.95f else 0.75f), knobR, at)
-        drawCircle(Color.White.copy(alpha = if (held) 0.30f else 0.14f), knobR, at,
+        drawCircle(Color.Black.copy(alpha = if (held) 0.22f else 0.10f), knobR, at,
             style = Stroke(1f))
     }
 }
@@ -266,15 +266,15 @@ fun ChannelBar(value: Int, live: Boolean, modifier: Modifier = Modifier) {
         val h = size.height
         val rad = androidx.compose.ui.geometry.CornerRadius(h / 2f, h / 2f)
 
-        drawRoundRect(T.text.copy(alpha = 0.07f), size = size, cornerRadius = rad)
+        drawRoundRect(T.track, size = size, cornerRadius = rad)
         val frac = ((value - 1000) / 1000f).coerceIn(0f, 1f)
         if (frac > 0f) {
-            drawRoundRect(if (live) T.accent else T.textFaint,
+            drawRoundRect(if (live) T.accent else T.trackIdle,
                 size = Size(size.width * frac, h), cornerRadius = rad)
         }
         // Centre mark: an RC channel at rest sits here, and the eye needs a
         // reference for neutral that does not require reading a number.
-        drawRect(T.text.copy(alpha = 0.16f),
+        drawRect(T.gridStrong,
             topLeft = Offset(size.width / 2f - 0.5f, 0f), size = Size(1f, h))
     }
 }

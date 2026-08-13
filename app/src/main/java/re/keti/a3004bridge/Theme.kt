@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.TextStyle
@@ -42,22 +43,54 @@ import androidx.compose.ui.unit.sp
  */
 object T {
 
-    /** Page. Near-black rather than black, so panels above it read as raised. */
-    val bg = Color(0xFF0A0C10)
-    val surface = Color(0xFF12161D)
-    val surfaceHi = Color(0xFF1A202A)
+    /*
+     * A light palette, following the iOS light system colours rather than
+     * inventing one: a grey page with white cards on it, separation carried by
+     * that contrast instead of by outlines, one blue accent, and separators thin
+     * enough to read as a hairline rather than a border.
+     *
+     * Light is the right choice here for a reason, not just taste. This tablet is
+     * an SM-T736N and its panel is an LCD, so the backlight is on regardless of
+     * what the pixels say and a dark theme saves no power at all. What it does
+     * cost is daylight legibility: a dark LCD outdoors is mostly reflection, and
+     * this is a tablet somebody drives a robot with.
+     */
 
-    /** Hairline: low-alpha white, so it works over any surface. */
-    val hairline = Color(0x1FFFFFFF)
+    /** The page. Grey, so a white card on it needs no border to be a card. */
+    val bg = Color(0xFFF2F2F7)
+    val surface = Color(0xFFFFFFFF)
+    val surfaceHi = Color(0xFFE9E9EF)
 
-    val text = Color(0xFFEDF1F7)
-    val textDim = Color(0xFF94A1B4)
-    val textFaint = Color(0xFF5D6879)
+    /** Separator, not a border: present at a glance only if you look for it. */
+    val hairline = Color(0x1F3C3C43)
 
-    val accent = Color(0xFF4C9AFF)
-    val good = Color(0xFF31C56D)
-    val warn = Color(0xFFF0A93B)
-    val bad = Color(0xFFF0553B)
+    val text = Color(0xFF1C1C1E)
+    val textDim = Color(0xFF6C6C70)
+    val textFaint = Color(0xFFA0A0A6)
+
+    val accent = Color(0xFF007AFF)
+    val good = Color(0xFF248A3D)
+    val warn = Color(0xFFC77700)
+    val bad = Color(0xFFD70015)
+
+    /**
+     * Video keeps a dark ground. A frame letterboxed against white glares beside
+     * the picture and changes how the picture itself reads - which is why photo
+     * and video viewers are dark even in a light interface.
+     */
+    val videoBg = Color(0xFF1C1C1E)
+
+    /*
+     * Ink for drawn surfaces, as its own tokens rather than alpha on the text
+     * colour. The dark theme's 5-7% white worked because it sat on near-black;
+     * the same alpha of black on white is almost nothing, and the range rings
+     * disappeared. These are the iOS system greys, which are chosen to hold at
+     * these weights on a light ground.
+     */
+    val gridStrong = Color(0xFFD1D1D6)   /* range rings, panel divider */
+    val gridWeak = Color(0xFFE5E5EA)     /* axes, crosshairs */
+    val track = Color(0xFFE5E5EA)        /* the unfilled part of a bar */
+    val trackIdle = Color(0xFFBCBCC2)    /* a bar with no live signal */
 
     /** 4pt grid. Every gap on screen is one of these. */
     val s1 = 4.dp
@@ -66,19 +99,20 @@ object T {
     val s4 = 16.dp
     val s5 = 24.dp
 
-    val rSm = RoundedCornerShape(10.dp)
-    val rMd = RoundedCornerShape(16.dp)
+    val rSm = RoundedCornerShape(12.dp)
+    val rMd = RoundedCornerShape(18.dp)
     val rLg = RoundedCornerShape(22.dp)
 
-    val title = TextStyle(color = text, fontSize = 19.sp, fontWeight = FontWeight.Medium)
+    val title = TextStyle(color = text, fontSize = 19.sp,
+        fontWeight = FontWeight.SemiBold, letterSpacing = (-0.3).sp)
 
-    /** Section heading: small, tracked out, muted. Reads as a label, not a shout. */
+    /** Section heading: small, tracked out, muted. A label, not a shout. */
     val label = TextStyle(color = textFaint, fontSize = 10.sp,
-        fontWeight = FontWeight.Medium, letterSpacing = 1.4.sp)
+        fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp)
 
     val body = TextStyle(color = textDim, fontSize = 11.sp, lineHeight = 15.sp)
 
-    /** Telemetry. Fixed-width digits. */
+    /** Telemetry. Fixed-width digits, so a value changing does not shift its neighbour. */
     val mono = TextStyle(color = textDim, fontSize = 11.sp,
         fontFamily = FontFamily.Monospace)
 }
@@ -110,9 +144,13 @@ fun Panel(
 ) {
     Column(
         modifier
+            // Shadow, not a border. On a grey page a white card is already
+            // separated; an outline as well is the belt-and-braces look that
+            // makes a light interface feel drawn rather than lit. Applied before
+            // the clip so it renders outside the shape.
+            .shadow(2.dp, T.rMd, clip = false)
             .clip(T.rMd)
             .background(T.surface)
-            .border(1.dp, T.hairline, T.rMd)
     ) {
         Row(
             Modifier.padding(start = T.s4, end = T.s4, top = T.s3, bottom = T.s2),
