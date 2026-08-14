@@ -98,6 +98,8 @@ private fun Bridge() {
     var canState by remember { mutableStateOf("대기") }
     var tlState by remember { mutableStateOf("teleop 없음" to T.textDim) }
     var micState by remember { mutableStateOf("") }
+    var mapState by remember { mutableStateOf("지도 없음") }
+    var navState by remember { mutableStateOf("항법 없음" to T.textDim) }
 
     var armed by remember { mutableStateOf(false) }
     var micOn by remember { mutableStateOf(false) }
@@ -105,10 +107,17 @@ private fun Bridge() {
     var wifiNote by remember { mutableIntStateOf(0) }
     val channels = remember { mutableStateListOf<Int>().also { l -> repeat(14) { l.add(1500) } } }
 
+    // The map is replaced wholesale on every fetch, and two consecutive frames
+    // of an unchanging room are equal by value. neverEqualPolicy so the canvas
+    // still redraws when only the pose inside it moved.
+    var map by remember { mutableStateOf<MapFrame?>(null, neverEqualPolicy()) }
+    var goal by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+
     // Single-slot holders for things the effect owns and the controls have to
     // reach. Created in the effect and cleared on dispose, so there is never a
     // live sender the current composition does not know about.
     val tele = remember { arrayOfNulls<TeleopSender>(1) }
+    val goals = remember { arrayOfNulls<GoalSender>(1) }
     val pcm = remember { arrayOfNulls<PcmPlayer>(1) }
 
     // Awake only while armed. Driving while the screen sleeps must not be
@@ -145,6 +154,14 @@ private fun Bridge() {
 
         val sender = TeleopSender(host, 7721, 50).also { tele[0] = it; it.start() }
 
+        val mapRx = MapReader("http://$host/sensors", 400,
+            onMap = { m ->
+                map = m
+                mapState = "${m.w}x${m.h} · ${m.resCm}cm"
+            },
+            onState = { s -> mapState = s }).also { it.start() }
+        goals[0] = GoalSender(host, 7604)
+
         val status = StatusPoller("http://$host/sensors", 400) { name, j ->
             when (name) {
                 "rc" -> if (j == null) {
@@ -165,6 +182,17 @@ private fun Bridge() {
                             " · ${j.optJSONObject("frames")?.length() ?: 0} ids" +
                             if (j.optBoolean("inject_allowed")) " · INJECT"
                             else " · read-only"
+                "navigate" -> navState = if (j == null) "항법 없음" to T.textDim else {
+                    val st = j.optString("state")
+                    val fault = j.optString("fault").takeIf { it.isNotEmpty() && it != "null" }
+                    val rem = j.optInt("remaining_cm")
+                    when (st) {
+                        "driving" -> "주행 중 · ${rem} cm 남음" to T.good
+                        "arrived" -> "도착" to T.good
+                        "idle" -> "대기 · 점수 ${j.optInt("match_score_pct")}%" to T.textDim
+                        else -> (fault ?: "정지") to T.bad
+                    }
+                }
                 "teleop" -> if (j == null) {
                     tlState = "teleop 없음" to T.textDim
                 } else {
@@ -190,8 +218,10 @@ private fun Bridge() {
             armed = false
             sender.armed = false
             mjpeg.halt(); ringRx.halt(); status.halt(); sender.halt()
+            mapRx.halt()
             pcm[0]?.halt(); pcm[0] = null
             tele[0] = null
+            goals[0] = null
             micOn = false; micState = ""
             frame = null
             camState = "대기" to T.textFaint
@@ -309,6 +339,37 @@ private fun Bridge() {
             Spacer(Modifier.width(T.s3))
 
             Column(Modifier.weight(1f)) {
+                Panel(
+                    "지도",
+                    Modifier.weight(1.15f),
+                    status = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Status(navState.first, navState.second)
+                            Spacer(Modifier.size(T.s2))
+                            if (goal != null)
+                                Chip("정지", emph = Emph.Tinted, colour = T.bad) {
+                                    goals[0]?.stop(); goal = null
+                                }
+                        }
+                    }
+                ) { body ->
+                    Column(body) {
+                        MapPlot(map, goal, Modifier.weight(1f)) { x, y ->
+                            // Tapping sets a destination. It cannot start the
+                            // vehicle on its own: navigate has to be enabled and
+                            // pointed at agx-cmd, and can-bridge still needs
+                            // allow_inject, so a tap on a bench is a tap on a map.
+                            if (goals[0]?.goal(x, y) == true) goal = x to y
+                        }
+                        Status(
+                            if (goal == null) "$mapState · 탭해서 목적지 지정"
+                            else "$mapState · 목적지 ${goal!!.first / 100f}, ${goal!!.second / 100f} m",
+                            modifier = Modifier.padding(
+                                start = T.s5, end = T.s5, top = T.s2, bottom = T.s3)
+                        )
+                    }
+                }
+
                 Panel(
                     "라이다", Modifier.weight(1f),
                     status = { Status(ringState) }

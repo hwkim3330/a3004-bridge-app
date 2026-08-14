@@ -1,6 +1,10 @@
 package re.keti.a3004bridge
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.Composable
@@ -14,6 +18,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextMeasurer
@@ -22,6 +27,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
@@ -324,5 +330,116 @@ fun ChannelBar(value: Int, live: Boolean, modifier: Modifier = Modifier) {
         // reference for neutral that does not require reading a number.
         drawRect(T.gridStrong,
             topLeft = Offset(size.width / 2f - 0.5f, 0f), size = Size(1f, h))
+    }
+}
+
+/**
+ * The map, the vehicle on it, and the destination you tapped.
+ *
+ * Drawn from one `MapFrame`, so the cells, the transform and the pose are
+ * always the same instant - a map and a pose fetched separately drift apart and
+ * put the robot through a wall.
+ *
+ * Three deliberate choices about what a person sees:
+ *
+ *  - unknown ground is the page colour, not a shade of grey. A map that starts
+ *    as a grey rectangle looks broken; one that starts empty and fills in looks
+ *    like it is working, which is also the truth.
+ *  - the view follows the map, not the vehicle. A rotating, recentring display
+ *    is disorienting to tap on, and tapping is what this screen is for.
+ *  - the goal is drawn where it was *sent*, not where the planner rounded it
+ *    to. If those differ the tap did not do what it looked like it did, and
+ *    that is worth being able to see.
+ */
+@Composable
+fun MapPlot(
+    map: MapFrame?,
+    goalCm: Pair<Int, Int>?,
+    modifier: Modifier = Modifier,
+    onTap: (Int, Int) -> Unit,
+) {
+    if (map == null) {
+        EmptyState("지도 없음", modifier = modifier)
+        return
+    }
+
+    // Only the part that has been seen is worth showing. Fitting the whole
+    // 40 m grid puts a 12 m room in the middle sixth of the screen.
+    val bounds = remember(map) {
+        var lo = Int.MAX_VALUE; var hi = Int.MIN_VALUE
+        var bo = Int.MAX_VALUE; var bi = Int.MIN_VALUE
+        for (y in 0 until map.h) for (x in 0 until map.w) {
+            val v = map.at(x, y)
+            if (v != MapFrame.S2_UNKNOWN) {
+                if (x < lo) lo = x; if (x > hi) hi = x
+                if (y < bo) bo = y; if (y > bi) bi = y
+            }
+        }
+        if (lo > hi) null else intArrayOf(lo - 2, bo - 2, hi + 2, bi + 2)
+    }
+
+    Box(modifier.background(T.surfaceHi)) {
+        var scale by remember { mutableStateOf(1f) }
+        var offX by remember { mutableStateOf(0f) }
+        var offY by remember { mutableStateOf(0f) }
+
+        Canvas(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(map.w, map.h, bounds) {
+                    detectTapGestures { p ->
+                        if (scale <= 0f) return@detectTapGestures
+                        val cx = ((p.x - offX) / scale).toInt()
+                        val cy = map.h - 1 - ((p.y - offY) / scale).toInt()
+                        if (cx in 0 until map.w && cy in 0 until map.h)
+                            onTap(map.xCmOf(cx), map.yCmOf(cy))
+                    }
+                }
+        ) {
+            val b = bounds ?: intArrayOf(0, 0, map.w - 1, map.h - 1)
+            val bw = (b[2] - b[0] + 1).coerceAtLeast(1)
+            val bh = (b[3] - b[1] + 1).coerceAtLeast(1)
+            scale = minOf(size.width / bw, size.height / bh)
+            offX = (size.width - bw * scale) / 2f - b[0] * scale
+            offY = (size.height - bh * scale) / 2f - (map.h - 1 - b[3]) * scale
+
+            fun sx(cx: Int) = offX + cx * scale
+            fun sy(cy: Int) = offY + (map.h - 1 - cy) * scale
+
+            for (cy in b[1]..b[3]) {
+                for (cx in b[0]..b[2]) {
+                    val v = map.at(cx, cy)
+                    val c = when {
+                        v > MapFrame.S2_UNKNOWN + 8 -> T.text
+                        v < MapFrame.S2_UNKNOWN - 8 -> T.surface
+                        else -> continue          // unknown: leave the page
+                    }
+                    drawRect(c, Offset(sx(cx), sy(cy)), Size(scale + 0.6f, scale + 0.6f))
+                }
+            }
+
+            goalCm?.let { (gx, gy) ->
+                val p = Offset(sx(map.cellXOf(gx)) + scale / 2,
+                               sy(map.cellYOf(gy)) + scale / 2)
+                drawCircle(T.accent, 9f, p, style = Stroke(width = 2.5f))
+                drawLine(T.accent, Offset(p.x - 13f, p.y), Offset(p.x + 13f, p.y), 2f)
+                drawLine(T.accent, Offset(p.x, p.y - 13f), Offset(p.x, p.y + 13f), 2f)
+            }
+
+            // The vehicle: a wedge, so heading is readable without a label.
+            val vx = sx(map.cellXOf(map.poseXCm)) + scale / 2
+            val vy = sy(map.cellYOf(map.poseYCm)) + scale / 2
+            val a = -map.headingDeg * PI.toFloat() / 180f
+            val r = 11f
+            val path = Path().apply {
+                moveTo(vx + r * cos(a), vy + r * sin(a))
+                lineTo(vx + r * cos(a + 2.5f), vy + r * sin(a + 2.5f))
+                lineTo(vx + r * 0.35f * cos(a + PI.toFloat()),
+                       vy + r * 0.35f * sin(a + PI.toFloat()))
+                lineTo(vx + r * cos(a - 2.5f), vy + r * sin(a - 2.5f))
+                close()
+            }
+            drawPath(path, T.good)
+        }
     }
 }

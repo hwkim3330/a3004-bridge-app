@@ -48,5 +48,12 @@ dependencies {
 	// Structured concurrency, so a stream's lifetime is the screen's lifetime by
 	// construction rather than by remembering to call halt() in onPause.
 	implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+
+	// A plain JVM test, for the one thing in this app that parses a binary
+	// format another program wrote. MapFrame.parse touches no Android API, so
+	// it runs here rather than needing a device - and a header the router and
+	// the tablet disagree about is a map drawn in the wrong place, which is
+	// exactly the kind of mistake that hides.
+	testImplementation("junit:junit:4.13.2")
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }
