@@ -32,7 +32,12 @@ object Wire {
     /** ouster-edge's ring, arriving here. This app listens; it does not ask. */
     const val RING_PORT = 7602
 
-    /** agx-cmd's TELE input, from package/keti/agx-cmd. */
+    /**
+     * teleop's TCMD input. Not agx-cmd, which this said before and which is on
+     * 7722 and speaks a different frame - see doc/PORTS.md in the firmware tree.
+     * What leaves this app is operator intent, 24 bytes, and teleop is the thing
+     * that decides whether to believe it.
+     */
     const val TELE_PORT = 7721
 
     /** navigate's command port: "GOAL x_cm y_cm" and "STOP". */

@@ -316,6 +316,9 @@ class TeleopSender(
     /* Mutable and volatile: the activity drops this to a keepalive rate when
        disarmed, so it has to be read on every pass rather than captured once. */
     @Volatile var hz: Int = 50,
+    /* Optional, so the existing call site needs no change: reports the first
+       failure of a run and the recovery, not every dropped frame. */
+    private val onState: (String) -> Unit = {},
 ) : Thread("teleop") {
 
     private val stop = AtomicBoolean(false)
@@ -326,6 +329,7 @@ class TeleopSender(
     @Volatile var y = 0f
     @Volatile var r = 0f
     @Volatile var sent = 0L
+    @Volatile var failures = 0
     private var seq = 0
 
     fun halt() { stop.set(true); interrupt() }
@@ -335,7 +339,27 @@ class TeleopSender(
         val addr = runCatching { InetAddress.getByName(host) }.getOrNull() ?: return
         try {
             while (!stop.get()) {
-                send(sock, addr, armed)
+                //
+                // A send that fails must not take the app with it.
+                //
+                // This threw IOException straight out of run(), so the thread
+                // died and Android killed the process. ENETUNREACH is not an
+                // exceptional condition here: it happens every time the app
+                // binds itself to the router's access point, because for a
+                // moment there is no route - and it happens again whenever the
+                // tablet walks out of range, which is the exact situation the
+                // deadman exists for. An operator's screen dying at the moment
+                // the link goes is the worst possible behaviour.
+                //
+                // Losing frames is fine and already handled: agx-cmd ramps down
+                // and stops on its own when they stop arriving.
+                try {
+                    send(sock, addr, armed)
+                    if (failures > 0) { failures = 0; onState("") }
+                } catch (e: Exception) {
+                    failures++
+                    if (failures == 1) onState("전송 실패: ${e.message ?: "unknown"}")
+                }
                 sleepQuietly((1000L / hz.coerceAtLeast(1)).coerceAtLeast(5L))
             }
         } finally {

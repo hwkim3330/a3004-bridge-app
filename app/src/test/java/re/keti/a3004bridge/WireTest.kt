@@ -24,7 +24,7 @@ class WireTest {
         assertEquals("mic-stream.config", 8082, Wire.MIC_PORT)
         assertEquals("ouster-edge ring", 7602, Wire.RING_PORT)
         assertEquals("ouster-edge sse", 7603, Wire.RING_SSE_PORT)
-        assertEquals("agx-cmd listen", 7721, Wire.TELE_PORT)
+        assertEquals("teleop cmd_port, not agx-cmd", 7721, Wire.TELE_PORT)
         assertEquals("navigate cmd_port", 7604, Wire.GOAL_PORT)
     }
 
