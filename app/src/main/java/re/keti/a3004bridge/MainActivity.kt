@@ -113,6 +113,11 @@ private fun Bridge() {
     var map by remember { mutableStateOf<MapFrame?>(null, neverEqualPolicy()) }
     var goal by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
+    // Tapped but not sent. The gap between meaning a destination and the
+    // vehicle driving to it should contain a decision, not a fingertip.
+    var pending by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var navDriving by remember { mutableStateOf(false) }
+
     // Single-slot holders for things the effect owns and the controls have to
     // reach. Created in the effect and cleared on dispose, so there is never a
     // live sender the current composition does not know about.
@@ -187,6 +192,7 @@ private fun Bridge() {
                             else " · read-only"
                 "navigate" -> navState = if (j == null) "항법 없음" to T.textDim else {
                     val st = j.optString("state")
+                    navDriving = st == "driving"
                     val fault = j.optString("fault").takeIf { it.isNotEmpty() && it != "null" }
                     val rem = j.optInt("remaining_cm")
                     when (st) {
@@ -348,7 +354,19 @@ private fun Bridge() {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Status(navState.first, navState.second)
                         Spacer(Modifier.size(T.s2))
-                        if (goal != null)
+                        pending?.let { (px, py) ->
+                            Chip("여기로", emph = Emph.Filled) {
+                                if (goals[0]?.goal(px, py) == true) {
+                                    goal = px to py
+                                    pending = null
+                                } else {
+                                    navState = "목적지 전송 실패" to T.bad
+                                }
+                            }
+                            Spacer(Modifier.size(T.s2))
+                            Chip("취소", emph = Emph.Quiet) { pending = null }
+                        }
+                        if (pending == null && (goal != null || navDriving))
                             Chip("정지", emph = Emph.Tinted, colour = T.bad) {
                                 goals[0]?.stop(); goal = null
                             }
@@ -356,16 +374,29 @@ private fun Bridge() {
                 }
             ) { body ->
                 Column(body) {
-                    MapPlot(map, goal, Modifier.weight(1f)) { x, y ->
-                        // Tapping sets a destination. It cannot start the
-                        // vehicle on its own: navigate has to be enabled and
-                        // pointed at agx-cmd, and can-bridge still needs
-                        // allow_inject, so a tap on a bench is a tap on a map.
-                        if (goals[0]?.goal(x, y) == true) goal = x to y
-                    }
+                    // A tap proposes; the chip above sends. Nothing here can
+                    // start a vehicle on its own either way: navigate is off by
+                    // default, has to be pointed at agx-cmd, and can-bridge
+                    // still needs allow_inject.
+                    MapPlot(
+                        map, goal, pending,
+                        vehicleColour = when {
+                            navState.second == T.bad -> T.bad
+                            navDriving -> T.good
+                            else -> T.textDim
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) { x, y -> pending = x to y }
                     Status(
-                        if (goal == null) "$mapState · 탭해서 목적지 지정"
-                        else "$mapState · 목적지 ${goal!!.first / 100f}, ${goal!!.second / 100f} m",
+                        when {
+                            pending != null -> "%s · 여기로 보낼까요? %.1f, %.1f m"
+                                .format(mapState, pending!!.first / 100f,
+                                        pending!!.second / 100f)
+                            goal != null -> "%s · 목적지 %.1f, %.1f m"
+                                .format(mapState, goal!!.first / 100f,
+                                        goal!!.second / 100f)
+                            else -> "$mapState · 탭해서 목적지 지정"
+                        },
                         modifier = Modifier.padding(
                             start = T.s5, end = T.s5, top = T.s2, bottom = T.s3)
                     )
