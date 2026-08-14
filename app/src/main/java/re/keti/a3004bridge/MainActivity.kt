@@ -185,11 +185,24 @@ private fun Bridge() {
                             channels[i] = a.optInt(i, 1500)
                     }
                 }
-                "can" -> canState = if (j == null) "can 없음" else
+                "can" -> canState = if (j == null) "can 없음" else {
+                    // The generation belongs on this line because it decides
+                    // whether the numbers beside it mean anything: the two
+                    // protocols reuse ids for unrelated things, and agx-cmd
+                    // sends nothing at all while it is undecided. Frames
+                    // arriving with no generation is the state that otherwise
+                    // reads as a broken commander.
+                    val gen = when (j.optString("agilex_protocol")) {
+                        "v1" -> "v1"
+                        "v2" -> "v2"
+                        else -> "세대 미확인"
+                    }
                     "${j.optString("interface")} · rx ${j.optLong("rx")}" +
                             " · ${j.optJSONObject("frames")?.length() ?: 0} ids" +
+                            " · $gen" +
                             if (j.optBoolean("inject_allowed")) " · INJECT"
                             else " · read-only"
+                }
                 "navigate" -> navState = if (j == null) "항법 없음" to T.textDim else {
                     val st = j.optString("state")
                     navDriving = st == "driving"
