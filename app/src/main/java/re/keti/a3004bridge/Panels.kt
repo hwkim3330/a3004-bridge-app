@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextMeasurer
@@ -29,6 +30,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.PI
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
@@ -46,9 +48,25 @@ private const val TAU = (Math.PI * 2).toFloat()
 
 /** Polar plot of the lidar range ring. */
 @Composable
-fun RingPlot(ring: Ring?, maxRange: Float = 30f, modifier: Modifier = Modifier) {
+fun RingPlot(ring: Ring?, maxRange: Float = 0f, modifier: Modifier = Modifier) {
     val tm = rememberTextMeasurer()
     Canvas(modifier) {
+        //
+        // Scale to what came back, not to what the sensor could see.
+        //
+        // Fixed at 30 m, a sensor on a desk put every return inside the innermost
+        // ring - a plot of a room five metres across, drawn at one sixth scale,
+        // reading as a speck. The rings stop being reference marks when nothing
+        // reaches them.
+        //
+        // Rounded up to the ring step so the outermost ring is a round number,
+        // and floored at 2 m so a sensor facing a wall does not zoom to absurdity.
+        val dataMax = ((ring?.maxCm ?: 0) / 100f)
+        val range = when {
+            maxRange > 0f -> maxRange
+            dataMax <= 0f -> 10f
+            else -> maxOf(2f, ceil(dataMax * 1.15f))
+        }
         val cx = size.width / 2f
         val cy = size.height / 2f
         val r = min(size.width, size.height) * 0.44f
@@ -56,20 +74,21 @@ fun RingPlot(ring: Ring?, maxRange: Float = 30f, modifier: Modifier = Modifier) 
         // Never more than about six rings: past that they stop being reference
         // marks and become texture.
         val step = when {
-            maxRange <= 10f -> 2
-            maxRange <= 30f -> 5
-            maxRange <= 60f -> 10
+            range <= 6f -> 1
+            range <= 10f -> 2
+            range <= 30f -> 5
+            range <= 60f -> 10
             else -> 20
         }
         var m = step
         var idx = 0
-        while (m <= maxRange) {
-            val rr = r * m / maxRange
+        while (m <= range) {
+            val rr = r * m / range
             drawCircle(T.gridStrong, rr, Offset(cx, cy),
                 style = Stroke(1f))
             // Labels on a diagonal, every other ring. Stacked up the vertical
             // axis they read as a list rather than as marks on their own rings.
-            if (idx % 2 == 1 || m + step > maxRange) {
+            if (idx % 2 == 1 || m + step > range) {
                 val a = -TAU / 8f
                 label(tm, "${m}m",
                     Offset(cx + cos(a) * rr + 3f, cy + sin(a) * rr - 12f))
@@ -95,15 +114,22 @@ fun RingPlot(ring: Ring?, maxRange: Float = 30f, modifier: Modifier = Modifier) 
             val v = ring.cm[i]
             if (v < 0) continue
             val metres = v / 100f
-            if (metres > maxRange) continue
+            if (metres > range) continue
             // sector 0 points up, azimuth increases clockwise
             val a = (i.toFloat() / n) * TAU - TAU / 4f
-            val rr = r * metres / maxRange
-            // Near is warm, far is cool: something approaching reads before it
-            // is consciously measured.
-            val f = (metres / maxRange).coerceIn(0f, 1f)
-            drawCircle(hsv(10f + f * 200f, 0.72f, 1f), dotR,
-                Offset(cx + cos(a) * rr, cy + sin(a) * rr))
+            val rr = r * metres / range
+            //
+            // Coloured by reflectivity, not by distance.
+            //
+            // Distance is already the radius. Colouring by it again spent the
+            // only free dimension on information the position had already given,
+            // and left the ring's own reflectivity byte unread. Dark carpet,
+            // painted wall and retroreflective tape are wildly different here at
+            // the same distance, and that difference is what tells you what you
+            // are looking at.
+            val f = (ring.refl[i] / 200f).coerceIn(0f, 1f)
+            drawCircle(hsv(215f - f * 200f, 0.62f - f * 0.30f, 0.55f + f * 0.45f),
+                       dotR, Offset(cx + cos(a) * rr, cy + sin(a) * rr))
         }
         drawCircle(T.accent.copy(alpha = 0.18f), 7f, Offset(cx, cy))
         drawCircle(T.accent, 2.5f, Offset(cx, cy))
@@ -361,6 +387,12 @@ fun MapPlot(
     goalCm: Pair<Int, Int>?,
     pendingCm: Pair<Int, Int>?,
     vehicleColour: Color,
+    /* The ring as it is right now, drawn over the map it is being matched
+       against. Two things become visible that neither shows alone: whether the
+       sensor still agrees with the map - live returns sitting off the mapped
+       walls mean the pose is drifting - and what has appeared since, which is
+       everything the map does not have and a person needs to see. */
+    ring: Ring? = null,
     modifier: Modifier = Modifier,
     onTap: (Int, Int) -> Unit,
 ) {
@@ -434,9 +466,22 @@ fun MapPlot(
                     val px = sx(cx)
                     if (px < -scale || px > size.width) continue
                     val v = map.at(cx, cy)
+                    //
+                    // A ramp, not two colours.
+                    //
+                    // Occupancy is a confidence and it was being thresholded away
+                    // into black or white, so a wall seen once looked exactly like
+                    // one seen two hundred times. The ramp costs nothing and shows
+                    // which parts of the map to trust.
                     val c = when {
-                        v > MapFrame.S2_UNKNOWN + 8 -> T.text
-                        v < MapFrame.S2_UNKNOWN - 8 -> T.surface
+                        v > MapFrame.S2_UNKNOWN + 8 -> {
+                            val f = ((v - MapFrame.S2_UNKNOWN) / 127f).coerceIn(0f, 1f)
+                            lerp(T.gridStrong, T.text, 0.25f + 0.75f * f)
+                        }
+                        v < MapFrame.S2_UNKNOWN - 8 -> {
+                            val f = ((MapFrame.S2_UNKNOWN - v) / 127f).coerceIn(0f, 1f)
+                            lerp(T.surfaceHi, T.surface, 0.3f + 0.7f * f)
+                        }
                         else -> continue
                     }
                     drawRect(c, Offset(px, py), Size(scale + 0.6f, scale + 0.6f))
@@ -499,6 +544,24 @@ fun MapPlot(
             pendingCm?.let { (x, y) ->
                 cross(Offset(sx(map.cellXOf(x)) + scale / 2,
                              sy(map.cellYOf(y)) + scale / 2), T.warn, false)
+            }
+
+            // The live ring, placed at the pose the map was matched to.
+            ring?.let { rg ->
+                val hx = sx(map.cellXOf(map.poseXCm)) + scale / 2
+                val hy = sy(map.cellYOf(map.poseYCm)) + scale / 2
+                val head = -map.headingDeg * PI.toFloat() / 180f - PI.toFloat() / 2f
+                val perCm = scale / map.resCm
+                for (i in 0 until rg.sectors) {
+                    val d = rg.cm[i]
+                    if (d < 0) continue
+                    val a = head + (i.toFloat() / rg.sectors) * 2f * PI.toFloat()
+                    val px2 = hx + cos(a) * d * perCm
+                    val py2 = hy + sin(a) * d * perCm
+                    if (px2 < 0 || py2 < 0 || px2 > size.width || py2 > size.height)
+                        continue
+                    drawCircle(T.warn.copy(alpha = 0.75f), 1.8f, Offset(px2, py2))
+                }
             }
 
             val vx = sx(map.cellXOf(map.poseXCm)) + scale / 2

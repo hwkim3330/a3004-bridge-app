@@ -385,6 +385,7 @@ private fun Bridge() {
                             navDriving -> T.good
                             else -> T.textDim
                         },
+                        ring = ring,
                         modifier = Modifier.weight(1f),
                     ) { x, y -> pending = x to y }
                     Status(
@@ -408,7 +409,9 @@ private fun Bridge() {
                     "라이다", Modifier.weight(1f),
                     status = { Status(ringState) }
                 ) { body ->
-                    RingPlot(ring, 30f, body.fillMaxWidth().padding(T.s2))
+                    // 0 means scale to the data: a sensor indoors puts everything inside
+                    // the first ring of a fixed 30 m plot.
+                    RingPlot(ring, 0f, body.fillMaxWidth().padding(T.s2))
                 }
                 Spacer(Modifier.height(T.s3))
                 Panel(

@@ -235,8 +235,21 @@ class PcmPlayer(
 /** Decoded lidar range ring. Ranges are centimetres; -1 means no return. */
 class Ring(val sectors: Int) {
     val cm = IntArray(sectors) { -1 }
+
+    /* Reflectivity of the nearest return per sector, 0..255.
+     *
+     * The format has carried this since the beginning and the reader threw it
+     * away - the length check even accounted for the bytes. It is the difference
+     * between a plot of where things are and a plot that also shows what they
+     * are: retroreflective tape, painted walls and dark carpet are wildly
+     * different here at the same distance. */
+    val refl = IntArray(sectors)
+
     var frameId = 0
     var alarm = false
+
+    /** Farthest return, in centimetres, or 0 if nothing came back. */
+    val maxCm: Int get() = cm.max().coerceAtLeast(0)
 }
 
 /**
@@ -293,6 +306,7 @@ class RingReader(
         for (i in 0 until sectors) {
             val v = u16(b, 20 + i * 2)
             r.cm[i] = if (v == 0xFFFF) -1 else v
+            r.refl[i] = b[20 + sectors * 2 + i].toInt() and 0xFF
         }
         return r
     }
