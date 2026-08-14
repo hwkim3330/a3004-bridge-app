@@ -136,7 +136,9 @@ private fun Bridge() {
      * remember: resume starts them, pause disposes them.
      */
     LifecycleResumeEffect(host) {
-        val mjpeg = MjpegReader("http://$host:8080/stream",
+        val ep = Endpoints(host)
+
+        val mjpeg = MjpegReader(ep.cameraStream,
             onFrame = { bmp: Bitmap ->
                 frame = bmp.asImageBitmap()
                 camState = "live" to T.good
@@ -144,7 +146,7 @@ private fun Bridge() {
             },
             onState = { s -> camState = s to T.bad }).also { it.start() }
 
-        val ringRx = RingReader(7602,
+        val ringRx = RingReader(Wire.RING_PORT,
             onRing = { r ->
                 ring = r
                 ringState = "${r.sectors} sectors · frame ${r.frameId}" +
@@ -152,17 +154,18 @@ private fun Bridge() {
             },
             onState = { s -> ringState = s }).also { it.start() }
 
-        val sender = TeleopSender(host, 7721, 50).also { tele[0] = it; it.start() }
+        val sender = TeleopSender(ep.host, Wire.TELE_PORT, Wire.TELE_HZ_ARMED)
+            .also { tele[0] = it; it.start() }
 
-        val mapRx = MapReader("http://$host/sensors", 400,
+        val mapRx = MapReader(ep.sensors, 400,
             onMap = { m ->
                 map = m
                 mapState = "${m.w}x${m.h} · ${m.resCm}cm"
             },
             onState = { s -> mapState = s }).also { it.start() }
-        goals[0] = GoalSender(host, 7604)
+        goals[0] = GoalSender(ep.host, Wire.GOAL_PORT)
 
-        val status = StatusPoller("http://$host/sensors", 400) { name, j ->
+        val status = StatusPoller(ep.sensors, 400) { name, j ->
             when (name) {
                 "rc" -> if (j == null) {
                     rcState = "rc 없음" to T.textDim; rcLive = false
@@ -288,7 +291,7 @@ private fun Bridge() {
 
         Row(Modifier.weight(1f)) {
             Panel(
-                "카메라", Modifier.weight(1.55f),
+                "카메라", Modifier.weight(1.2f),
                 status = { Badge(camState.first, camState.second) }
             ) { body ->
                 Column(body) {
@@ -323,7 +326,7 @@ private fun Bridge() {
                                 pcm[0]?.halt(); pcm[0] = null
                                 micOn = false; micState = ""
                             } else {
-                                pcm[0] = PcmPlayer("http://$host:8082",
+                                pcm[0] = PcmPlayer(Endpoints(host).audioBase,
                                     onLevel = {},
                                     onState = { s -> micState = s })
                                     .also { it.start() }
@@ -338,38 +341,38 @@ private fun Bridge() {
 
             Spacer(Modifier.width(T.s3))
 
-            Column(Modifier.weight(1f)) {
-                Panel(
-                    "지도",
-                    Modifier.weight(1.15f),
-                    status = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Status(navState.first, navState.second)
-                            Spacer(Modifier.size(T.s2))
-                            if (goal != null)
-                                Chip("정지", emph = Emph.Tinted, colour = T.bad) {
-                                    goals[0]?.stop(); goal = null
-                                }
-                        }
-                    }
-                ) { body ->
-                    Column(body) {
-                        MapPlot(map, goal, Modifier.weight(1f)) { x, y ->
-                            // Tapping sets a destination. It cannot start the
-                            // vehicle on its own: navigate has to be enabled and
-                            // pointed at agx-cmd, and can-bridge still needs
-                            // allow_inject, so a tap on a bench is a tap on a map.
-                            if (goals[0]?.goal(x, y) == true) goal = x to y
-                        }
-                        Status(
-                            if (goal == null) "$mapState · 탭해서 목적지 지정"
-                            else "$mapState · 목적지 ${goal!!.first / 100f}, ${goal!!.second / 100f} m",
-                            modifier = Modifier.padding(
-                                start = T.s5, end = T.s5, top = T.s2, bottom = T.s3)
-                        )
+            Panel(
+                "지도",
+                Modifier.weight(1.4f),
+                status = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Status(navState.first, navState.second)
+                        Spacer(Modifier.size(T.s2))
+                        if (goal != null)
+                            Chip("정지", emph = Emph.Tinted, colour = T.bad) {
+                                goals[0]?.stop(); goal = null
+                            }
                     }
                 }
+            ) { body ->
+                Column(body) {
+                    MapPlot(map, goal, Modifier.weight(1f)) { x, y ->
+                        // Tapping sets a destination. It cannot start the
+                        // vehicle on its own: navigate has to be enabled and
+                        // pointed at agx-cmd, and can-bridge still needs
+                        // allow_inject, so a tap on a bench is a tap on a map.
+                        if (goals[0]?.goal(x, y) == true) goal = x to y
+                    }
+                    Status(
+                        if (goal == null) "$mapState · 탭해서 목적지 지정"
+                        else "$mapState · 목적지 ${goal!!.first / 100f}, ${goal!!.second / 100f} m",
+                        modifier = Modifier.padding(
+                            start = T.s5, end = T.s5, top = T.s2, bottom = T.s3)
+                    )
+                }
+            }
 
+            Column(Modifier.weight(0.95f)) {
                 Panel(
                     "라이다", Modifier.weight(1f),
                     status = { Status(ringState) }

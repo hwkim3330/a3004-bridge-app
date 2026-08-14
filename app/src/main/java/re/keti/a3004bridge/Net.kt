@@ -384,7 +384,7 @@ class StatusPoller(
     fun halt() { stop.set(true); interrupt() }
 
     override fun run() {
-        val names = listOf("ouster", "can", "rc", "teleop", "navigate")
+        val names = Wire.STATUS_NAMES
         while (!stop.get()) {
             for (n in names) {
                 if (stop.get()) return
