@@ -29,8 +29,12 @@ class WireTest {
     }
 
     @Test fun statusNamesMatchTheDashboardSymlinks() {
+        // Checked against a running router's /www/sensors, where each of these
+        // is a symlink the dashboard package installs. slam2d is there and was
+        // simply not being read: the map was drawn with no indication of
+        // whether the mapper was still tracking.
         assertEquals(
-            listOf("ouster", "can", "rc", "teleop", "navigate"),
+            listOf("ouster", "can", "rc", "teleop", "navigate", "slam2d"),
             Wire.STATUS_NAMES)
         assertEquals("map.s2mp", Wire.MAP_PATH)
     }

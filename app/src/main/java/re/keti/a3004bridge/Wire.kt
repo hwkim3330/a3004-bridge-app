@@ -44,7 +44,8 @@ object Wire {
     const val GOAL_PORT = 7604
 
     /** Names under /sensors that StatusPoller fetches, one JSON each. */
-    val STATUS_NAMES = listOf("ouster", "can", "rc", "teleop", "navigate")
+    val STATUS_NAMES =
+        listOf("ouster", "can", "rc", "teleop", "navigate", "slam2d")
 
     /** The exported map, written by slam2d or navigate. See slam2d.h. */
     const val MAP_PATH = "map.s2mp"

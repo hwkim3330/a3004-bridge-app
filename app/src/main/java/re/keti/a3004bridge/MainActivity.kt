@@ -99,6 +99,15 @@ private fun Bridge() {
     var tlState by remember { mutableStateOf("teleop 없음" to T.textDim) }
     var micState by remember { mutableStateOf("") }
     var mapState by remember { mutableStateOf("지도 없음") }
+    /*
+     * How well the mapper is tracking, which the map picture alone does not
+     * show. A map that has stopped changing looks the same whether the vehicle
+     * is standing still or the matcher has lost the room, and those need
+     * different reactions. The score is the mapper's own confidence; being at
+     * the edge of its search window means the next scan may not be found at
+     * all, which is the moment before it loses tracking rather than after.
+     */
+    var slamState by remember { mutableStateOf("" to T.textDim) }
     var navState by remember { mutableStateOf("항법 없음" to T.textDim) }
 
     var armed by remember { mutableStateOf(false) }
@@ -202,6 +211,25 @@ private fun Bridge() {
                             " · $gen" +
                             if (j.optBoolean("inject_allowed")) " · INJECT"
                             else " · read-only"
+                }
+                "slam2d" -> slamState = if (j == null) "" to T.textDim else {
+                    val pct = j.optInt("score_frac_pct")
+                    val rings = j.optLong("rings")
+                    val matched = j.optLong("matched")
+                    val edge = j.optBoolean("at_search_edge")
+                    val thin = j.optLong("skipped_too_few_returns")
+                    // Reported separately from the score: a scan that was never
+                    // matched because it had too few returns is a sensor or
+                    // window problem, not a matching one, and the score says
+                    // nothing about it.
+                    val text = "매칭 $pct% · $matched/$rings" +
+                            (if (edge) " · 탐색 한계" else "") +
+                            (if (thin > 0) " · 빈 스캔 $thin" else "")
+                    text to when {
+                        edge || pct < 40 -> T.bad
+                        pct < 60 -> T.textDim
+                        else -> T.good
+                    }
                 }
                 "navigate" -> navState = if (j == null) "항법 없음" to T.textDim else {
                     val st = j.optString("state")
@@ -366,6 +394,13 @@ private fun Bridge() {
                 status = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Status(navState.first, navState.second)
+                        // The mapper's own confidence, next to the map it drew.
+                        // A map that stopped changing looks identical whether
+                        // the vehicle is parked or the matcher lost the room.
+                        if (slamState.first.isNotEmpty()) {
+                            Spacer(Modifier.size(T.s2))
+                            Status(slamState.first, slamState.second)
+                        }
                         Spacer(Modifier.size(T.s2))
                         pending?.let { (px, py) ->
                             Chip("여기로", emph = Emph.Filled) {
