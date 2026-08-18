@@ -170,9 +170,39 @@ class GoalSender(private val host: String, private val port: Int = 7604) {
      * file being there next time; a UDP acknowledgement would only say the
      * datagram arrived, which is not the thing being asked.
      */
-    fun saveMap(name: String = "current", port: Int = 7605): Boolean = runCatching {
+    fun saveMap(name: String = "current", port: Int = 7605): Boolean =
+        mapCmd("SAVE /etc/keti/maps/$name.s2mp", port)
+
+    /**
+     * Swap the survey the mapper is matching against.
+     *
+     * This is what changing floor is. One grid cannot hold two of them - a
+     * corridor upstairs and the same corridor downstairs are different maps at
+     * the same coordinates - so a floor change is a whole-map replacement while
+     * the vehicle is standing in the new one.
+     *
+     * The daemon takes the pose stored in the file as its first guess, which is
+     * where the vehicle was when that floor was saved. If it is somewhere else
+     * now, the match score says so and no amount of loading fixes it: a lidar in
+     * a corridor cannot tell which corridor. So this puts the vehicle roughly
+     * where it was, and the operator watches the score.
+     */
+    fun loadMap(name: String, port: Int = 7605): Boolean =
+        mapCmd("LOAD /etc/keti/maps/$name.s2mp", port)
+
+    /**
+     * Throw the map away and start building again.
+     *
+     * For a floor that was never surveyed, or a survey that has gone wrong -
+     * which happens when the sensor profile changes underneath the mapper,
+     * because the pose stops meaning anything and the match score does not
+     * reveal it.
+     */
+    fun resetMap(port: Int = 7605): Boolean = mapCmd("RESET", port)
+
+    private fun mapCmd(msg: String, port: Int): Boolean = runCatching {
         DatagramSocket().use { s ->
-            val b = "SAVE /etc/keti/maps/$name.s2mp".toByteArray()
+            val b = msg.toByteArray()
             s.send(DatagramPacket(b, b.size, InetAddress.getByName(host), port))
         }
         true

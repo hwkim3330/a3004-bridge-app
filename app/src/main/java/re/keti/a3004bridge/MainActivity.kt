@@ -145,6 +145,11 @@ private fun Bridge() {
     var navState by remember { mutableStateOf("no nav" to T.textDim) }
 
     var armed by remember { mutableStateOf(false) }
+    // The floor the operator is working with, and the survey the mapper says it
+    // has. Separate on purpose: see where mapLoaded is parsed.
+    var floor by remember { mutableStateOf(1) }
+    var mapLoaded by remember { mutableStateOf("") }
+    var confirmReset by remember { mutableStateOf(false) }
     var micOn by remember { mutableStateOf(true) }
     /*
      * Which of the two gets the big slot.
@@ -274,7 +279,16 @@ private fun Bridge() {
                     // matched because it had too few returns is a sensor or
                     // window problem, not a matching one, and the score says
                     // nothing about it.
+                    // Which survey is on the grid, which is not the same as
+                    // which floor the operator last tapped. The tap is intent;
+                    // this is what the mapper is actually matching against, and
+                    // a load that was refused leaves the two disagreeing.
+                    mapLoaded = j.optJSONObject("map")?.optString("loaded") ?: ""
+                    val floorName = mapLoaded.substringAfterLast('/')
+                        .removeSuffix(".s2mp")
                     val text = "match $pct% · $matched/$rings" +
+                            (if (floorName.isEmpty()) " · unsaved"
+                             else " · $floorName") +
                             (if (edge) " · at search edge" else "") +
                             (if (thin > 0) " · $thin thin scans" else "")
                     text to when {
@@ -743,9 +757,73 @@ private fun Bridge() {
                     // one - it goes to slam2d, which owns the map, not to navigate
                     // which only reads it - so it sits with the route controls and
                     // not beside ARM.
-                    Chip("SAVE MAP", emph = Emph.Quiet) {
-                        navState = if (goals[0]?.saveMap() == true)
-                            "map saved" to T.good else "save failed" to T.bad
+                    /*
+                     * A floor is a map.
+                     *
+                     * One grid cannot hold two of them: the corridor upstairs and
+                     * the corridor below it occupy the same coordinates, so they
+                     * cannot share a survey. That makes the map a thing you pick
+                     * rather than a thing you have, and one SAVE button was the
+                     * wrong shape for it - it could only ever keep one building.
+                     *
+                     * The row is the operator's choice; what the mapper actually
+                     * has is in the status line beside the map, because a LOAD the
+                     * daemon refused would otherwise leave this row claiming a
+                     * floor that is not on the grid.
+                     */
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Label("FLOOR")
+                        Spacer(Modifier.size(T.s2))
+                        for (n in 1..3) {
+                            Chip(
+                                "$n",
+                                emph = if (n == floor) Emph.Tinted else Emph.Quiet,
+                                colour = if (n == floor) T.accent else T.textDim
+                            ) { floor = n; confirmReset = false }
+                            if (n < 3) Spacer(Modifier.size(T.s1))
+                        }
+                    }
+                    Spacer(Modifier.height(T.s2))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Chip("SAVE", emph = Emph.Quiet) {
+                            navState = if (goals[0]?.saveMap("floor$floor") == true)
+                                "floor $floor saved" to T.good
+                            else "save failed" to T.bad
+                            confirmReset = false
+                        }
+                        Spacer(Modifier.size(T.s2))
+                        Chip("LOAD", emph = Emph.Quiet) {
+                            // The datagram leaving is not the map loading. Only the
+                            // status line can say whether the daemon took it, so
+                            // this says what was asked for and nothing more.
+                            navState = if (goals[0]?.loadMap("floor$floor") == true)
+                                "floor $floor requested" to T.textDim
+                            else "load not sent" to T.bad
+                            confirmReset = false
+                        }
+                        Spacer(Modifier.size(T.s2))
+                        /*
+                         * Two taps, because this one cannot be undone.
+                         *
+                         * RESET throws away a survey that may have taken a walk
+                         * around a building to build, and there is no other button
+                         * here whose accidental press costs anything. So the first
+                         * tap only arms it and says so in red.
+                         */
+                        Chip(
+                            if (confirmReset) "SURE?" else "RESET",
+                            emph = if (confirmReset) Emph.Filled else Emph.Quiet,
+                            colour = T.bad
+                        ) {
+                            if (confirmReset) {
+                                navState = if (goals[0]?.resetMap() == true)
+                                    "map cleared" to T.textDim
+                                else "reset not sent" to T.bad
+                                confirmReset = false
+                            } else {
+                                confirmReset = true
+                            }
+                        }
                     }
                     Spacer(Modifier.height(T.s2))
                     Row(verticalAlignment = Alignment.CenterVertically) {
