@@ -1,8 +1,14 @@
 package re.keti.a3004bridge
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +20,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -107,9 +118,20 @@ object T {
     val rMd = RoundedCornerShape(22.dp)
     val rPill = RoundedCornerShape(percent = 50)
 
+    /*
+     * "tnum" on everything that carries a number.
+     *
+     * Proportional digits have different widths - a 1 is narrower than a 0 - so a
+     * value updating in place makes the text after it shift left and right. On a
+     * screen where the match score, the ranges and the packet counts all change
+     * several times a second, that shimmer is the difference between an instrument
+     * and a web page. Tabular figures fix the advance width and cost nothing.
+     */
+
     /** The one big thing on screen. */
     val title = TextStyle(color = text, fontSize = 22.sp,
-        fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
+        fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp,
+        fontFeatureSettings = "tnum")
 
     /**
      * A card's name. Sentence case at a readable size, not a tracked-out
@@ -118,17 +140,20 @@ object T {
      * hierarchy.
      */
     val cardTitle = TextStyle(color = text, fontSize = 14.sp,
-        fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp)
+        fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp,
+        fontFeatureSettings = "tnum")
 
     /** A quieter heading inside a card. */
     val section = TextStyle(color = textDim, fontSize = 12.sp,
         fontWeight = FontWeight.Medium)
 
-    val body = TextStyle(color = textDim, fontSize = 12.sp, lineHeight = 17.sp)
+    val body = TextStyle(color = textDim, fontSize = 12.sp, lineHeight = 17.sp,
+        fontFeatureSettings = "tnum")
 
     /** Telemetry. Fixed-width digits, so a changing value does not shift its neighbour. */
     val mono = TextStyle(color = textDim, fontSize = 12.sp,
-        fontFamily = FontFamily.Monospace)
+        fontFamily = FontFamily.Monospace,
+        fontFeatureSettings = "tnum")
 }
 
 /** A quiet heading inside a card. Sentence case: it is a label, not a stencil. */
@@ -145,8 +170,19 @@ fun Label(s: String, modifier: Modifier = Modifier) =
  * hold in your hands.
  */
 @Composable
-fun Status(s: String, colour: Color = T.textDim, modifier: Modifier = Modifier) =
-    Text(s, style = T.body.copy(color = colour), modifier = modifier)
+fun Status(s: String, colour: Color = T.textDim, modifier: Modifier = Modifier) {
+    /*
+     * The colour eases rather than jumps.
+     *
+     * A status that snaps from grey to red is read as a redraw; the same change
+     * over a quarter of a second is read as something happening. That is most of
+     * where "considered" comes from in an interface, and it costs one wrapper.
+     * Short enough that nobody waits for it - 220 ms is under the threshold where
+     * a transition starts feeling like latency.
+     */
+    val c by animateColorAsState(colour, tween(220), label = "status")
+    Text(s, style = T.body.copy(color = c), modifier = modifier)
+}
 
 /** For digits that change in place. */
 @Composable
@@ -197,12 +233,13 @@ fun Panel(
  */
 @Composable
 fun Badge(text: String, colour: Color) {
+    val c by animateColorAsState(colour, tween(220), label = "badge")
     Text(
         text,
-        style = T.body.copy(color = colour, fontWeight = FontWeight.Medium),
+        style = T.body.copy(color = c, fontWeight = FontWeight.Medium),
         modifier = Modifier
             .clip(T.rPill)
-            .background(colour.copy(alpha = 0.13f))
+            .background(c.copy(alpha = 0.13f))
             .padding(horizontal = T.s3, vertical = 5.dp)
     )
 }
@@ -237,13 +274,41 @@ fun Chip(
         Emph.Tinted -> colour
         Emph.Filled -> Color.White
     }
+    /*
+     * Pressed state by scale and a haptic, not a ripple.
+     *
+     * A ripple is Android's idiom - ink spreading from the touch point - and it
+     * belongs to a different design language from the rest of this screen. What a
+     * physical control does is give slightly and be felt, so the chip shrinks by
+     * three percent and taps back. The spring rather than a tween because a
+     * button that returns linearly feels like an animation and one that overshoots
+     * slightly feels like a button.
+     *
+     * The haptic matters most on the controls that arm or move something: the
+     * confirmation arrives through the finger before the eye has read the state,
+     * which is the point of having it.
+     */
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val haptics = LocalHapticFeedback.current
+    val scale by animateFloatAsState(
+        if (pressed) 0.97f else 1f,
+        spring(dampingRatio = 0.55f, stiffness = 900f), label = "press")
+
     Box(
         modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .then(if (emph == Emph.Filled) Modifier.shadow(6.dp, shape, clip = false)
                   else Modifier)
             .clip(shape)
             .background(fill)
-            .clickable(onClick = onTap)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+            ) {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                onTap()
+            }
             .padding(
                 horizontal = if (big) T.s6 else T.s4,
                 vertical = if (big) T.s4 else 9.dp
