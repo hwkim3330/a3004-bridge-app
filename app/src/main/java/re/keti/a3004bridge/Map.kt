@@ -150,3 +150,108 @@ class GoalSender(private val host: String, private val port: Int = 7604) {
         true
     }.getOrDefault(false)
 }
+
+/**
+ * The lidar's own depth image, which the ring cannot carry.
+ *
+ * `ouster-edge`'s ring is one range per direction taken over `channel_band` -
+ * six of sixty-four rows - which is what a 2D map needs and is blind to
+ * everything outside it. A vehicle cares about the floor ending and about
+ * overhangs, and neither is in the ring at all. Measured on the bench, one
+ * revolution had 4643 returns across the rows and 160 in the band the ring
+ * uses; the ring's rows are in fact the sparsest, because a horizontal beam
+ * often flies into open space while a downward one always finds the floor.
+ *
+ * Fetched over HTTP rather than received as a datagram, and that is a
+ * measurement rather than a preference: 32x360 uint16 is 23 kB, which fragments
+ * into sixteen IP packets, and this project measured a nine-fragment datagram
+ * arriving at 58 % over WiFi because the limit is the frame rate. TCP segments
+ * it properly. See doc/COMPUTE.md.
+ */
+class RangeFrame(
+    val rows: Int,
+    val cols: Int,
+    val step: Int,
+    val bandLo: Int,
+    val bandHi: Int,
+    val frameId: Int,
+    /** centimetres, row-major, -1 where nothing came back */
+    val cm: IntArray,
+) {
+    /** Which image row a sensor channel landed in, for drawing the horizon. */
+    fun rowOfChannel(ch: Int): Int = if (step > 0) ch / step else ch
+
+    /** The 97th percentile of what came back, so one corridor does not flatten
+     *  the room. Falls back to 4 m when almost nothing is in view. */
+    fun scaleCm(): Int {
+        val good = cm.filter { it > 0 }.sorted()
+        if (good.isEmpty()) return 400
+        return maxOf(200, good[(good.size * 97) / 100])
+    }
+
+    companion object {
+        fun parse(b: ByteArray): RangeFrame? {
+            if (b.size < 24) return null
+            if (b[0] != 'O'.code.toByte() || b[1] != 'S'.code.toByte() ||
+                b[2] != 'R'.code.toByte() || b[3] != 'I'.code.toByte()) return null
+            if (b[4].toInt() != 1) return null
+            fun u16(o: Int) = (b[o].toInt() and 0xFF) or ((b[o + 1].toInt() and 0xFF) shl 8)
+            val cols = u16(6)
+            val rows = u16(8)
+            if (rows <= 0 || cols <= 0 || b.size < 24 + 2 * rows * cols) return null
+            val cm = IntArray(rows * cols)
+            var o = 24
+            for (i in cm.indices) {
+                val v = u16(o)
+                cm[i] = if (v == 0xFFFF) -1 else v
+                o += 2
+            }
+            return RangeFrame(rows, cols, b[14].toInt() and 0xFF,
+                              b[12].toInt() and 0xFF, b[13].toInt() and 0xFF,
+                              u16(10), cm)
+        }
+    }
+}
+
+/** Poll the depth image. Slower than the ring on purpose: 23 kB that changes
+ *  slowly is not worth the sensor's 10 Hz. */
+class RangeReader(
+    private val base: String,
+    private val periodMs: Long = 500,
+    private val onFrame: (RangeFrame) -> Unit,
+    private val onState: (String) -> Unit,
+) : Thread("range") {
+    private val stop = AtomicBoolean(false)
+
+    fun halt() { stop.set(true); interrupt() }
+
+    override fun run() {
+        var said = ""
+        while (!stop.get()) {
+            var conn: HttpURLConnection? = null
+            try {
+                conn = (URL("$base/range.bin").openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 2500
+                    readTimeout = 2500
+                    useCaches = false
+                }
+                if (conn.responseCode == 200) {
+                    val f = RangeFrame.parse(conn.inputStream.readBytes())
+                    if (f != null) {
+                        onFrame(f)
+                        if (said != "ok") { said = "ok"; onState("${f.rows}x${f.cols}") }
+                    } else if (said != "bad") { said = "bad"; onState("형식 아님") }
+                } else if (said != "none") {
+                    said = "none"
+                    onState(if (conn.responseCode == 404) "깊이 없음"
+                            else "HTTP ${conn.responseCode}")
+                }
+            } catch (e: Exception) {
+                if (said != "err") { said = "err"; onState("연결 없음") }
+            } finally {
+                runCatching { conn?.disconnect() }
+            }
+            try { sleep(periodMs) } catch (e: InterruptedException) { return }
+        }
+    }
+}

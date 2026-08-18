@@ -653,3 +653,59 @@ fun MicWave(
                  style = TextStyle(color = T.textDim, fontSize = 9.sp))
     }
 }
+
+/**
+ * The depth image, drawn as one rectangle per cell.
+ *
+ * A bitmap would be the obvious choice and is the wrong one here: 32x360 scaled
+ * to a panel means either a blurry upscale or a per-frame Bitmap allocation, and
+ * the grid is small enough that drawing it directly costs less than either.
+ * Eleven thousand rects at two frames a second is nothing next to the camera.
+ *
+ * Near is warm and far is cool, scaled to the 97th percentile of what came back
+ * rather than to the sensor's maximum - a room five metres across drawn against
+ * 100 m is one flat colour. Cells with no return are left as background, because
+ * "nothing came back" and "something is far away" are different facts and a
+ * gradient would merge them.
+ *
+ * The two lines mark the rows the ring is built from, which is the connection
+ * worth drawing: everything above and below them is what the 2D map cannot see.
+ */
+@Composable
+fun RangeView(f: RangeFrame?, modifier: Modifier = Modifier) {
+    val tm = rememberTextMeasurer()
+    Canvas(modifier) {
+        if (f == null || f.rows <= 0 || f.cols <= 0) {
+            drawText(tm, "깊이 영상 없음", topLeft = Offset(6f, 4f),
+                     style = TextStyle(color = T.textDim, fontSize = 11.sp))
+            return@Canvas
+        }
+        val cw = size.width / f.cols
+        val chh = size.height / f.rows
+        val scale = f.scaleCm().toFloat()
+        for (r in 0 until f.rows) {
+            for (c in 0 until f.cols) {
+                val v = f.cm[r * f.cols + c]
+                if (v <= 0) continue
+                val t = (1f - (v / scale)).coerceIn(0f, 1f)   // 1 = near
+                drawRect(
+                    Color(red = (0.25f + 0.75f * t).coerceAtMost(1f),
+                          green = (0.55f * (1f - kotlin.math.abs(t - 0.5f) * 2f))
+                                  .coerceIn(0f, 1f) + 0.15f,
+                          blue = (1f - t).coerceIn(0f, 1f)),
+                    topLeft = Offset(c * cw, r * chh),
+                    size = Size(cw + 1f, chh + 1f))
+            }
+        }
+        for (ch in intArrayOf(f.bandLo, f.bandHi)) {
+            val y = f.rowOfChannel(ch) * chh
+            if (y in 0f..size.height)
+                drawLine(T.textDim, Offset(0f, y), Offset(size.width, y), 1f)
+        }
+        drawText(tm,
+                 "깊이 %dx%d · 최대 %.1f m · 선 = 지도가 쓰는 행"
+                     .format(f.rows, f.cols, scale / 100f),
+                 topLeft = Offset(6f, 4f),
+                 style = TextStyle(color = T.textDim, fontSize = 10.sp))
+    }
+}

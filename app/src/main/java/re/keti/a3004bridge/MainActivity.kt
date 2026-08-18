@@ -90,6 +90,9 @@ private fun Bridge() {
      */
     var frame by remember { mutableStateOf<ImageBitmap?>(null, neverEqualPolicy()) }
     var ring by remember { mutableStateOf<Ring?>(null, neverEqualPolicy()) }
+    // The depth image: what the 2D ring throws away. See RangeFrame.
+    var range by remember { mutableStateOf<RangeFrame?>(null, neverEqualPolicy()) }
+    var rangeState by remember { mutableStateOf("깊이 없음") }
 
     var camState by remember { mutableStateOf("대기" to T.textFaint) }
     var linkState by remember { mutableStateOf("연결 중" to T.warn) }
@@ -180,6 +183,10 @@ private fun Bridge() {
 
         val sender = TeleopSender(ep.host, Wire.TELE_PORT, Wire.TELE_HZ_ARMED)
             .also { tele[0] = it; it.start() }
+
+        val rangeRx = RangeReader(ep.sensors, 500,
+            onFrame = { f -> range = f },
+            onState = { st -> rangeState = st }).also { it.start() }
 
         val mapRx = MapReader(ep.sensors, 400,
             onMap = { m ->
@@ -278,7 +285,7 @@ private fun Bridge() {
             armed = false
             sender.armed = false
             mjpeg.halt(); ringRx.halt(); status.halt(); sender.halt()
-            mapRx.halt()
+            mapRx.halt(); rangeRx.halt()
             pcm[0]?.halt(); pcm[0] = null
             tele[0] = null
             goals[0] = null
@@ -481,6 +488,11 @@ private fun Bridge() {
                     // 0 means scale to the data: a sensor indoors puts everything inside
                     // the first ring of a fixed 30 m plot.
                     RingPlot(ring, 0f, body.fillMaxWidth().padding(T.s2))
+                    Spacer(Modifier.height(T.s2))
+                    // Under the ring on purpose: the two are the same
+                    // revolution, one collapsed to a line and one not, and the
+                    // marked rows say which part of the depth image the ring is.
+                    RangeView(range, Modifier.fillMaxWidth().height(120.dp))
                 }
                 Spacer(Modifier.height(T.s3))
                 Panel(
