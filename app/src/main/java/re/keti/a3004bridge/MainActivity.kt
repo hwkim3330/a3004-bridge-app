@@ -108,6 +108,16 @@ private fun Bridge() {
      * all, which is the moment before it loses tracking rather than after.
      */
     var slamState by remember { mutableStateOf("" to T.textDim) }
+    /*
+     * A ring buffer of microphone peaks, and a counter to redraw on.
+     *
+     * The array is written from the audio thread thirty times a second and never
+     * reallocated; `micHead` is what Compose watches. Storing the levels in
+     * state instead would allocate a new list per buffer for a canvas that is
+     * redrawn either way.
+     */
+    val micLevels = remember { FloatArray(160) }
+    var micHead by remember { mutableStateOf(0, neverEqualPolicy()) }
     var navState by remember { mutableStateOf("항법 없음" to T.textDim) }
 
     var armed by remember { mutableStateOf(false) }
@@ -372,9 +382,14 @@ private fun Bridge() {
                             if (micOn) {
                                 pcm[0]?.halt(); pcm[0] = null
                                 micOn = false; micState = ""
+                                micLevels.fill(0f)
+                                micHead = micHead + 1
                             } else {
                                 pcm[0] = PcmPlayer(Endpoints(host).audioBase,
-                                    onLevel = {},
+                                    onLevel = { v ->
+                                        micLevels[micHead % micLevels.size] = v
+                                        micHead = micHead + 1
+                                    },
                                     onState = { s -> micState = s })
                                     .also { it.start() }
                                 micOn = true
@@ -382,6 +397,12 @@ private fun Bridge() {
                         }
                         Spacer(Modifier.width(T.s3))
                         Status(micState)
+                    }
+                    Spacer(Modifier.height(T.s2))
+                    MicWave(
+                        micLevels, micHead, micOn,
+                        Modifier.fillMaxWidth().height(48.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                     }
                 }
             }

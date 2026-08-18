@@ -579,3 +579,65 @@ fun MapPlot(
         }
     }
 }
+
+/**
+ * A rolling picture of what the microphone is hearing.
+ *
+ * `PcmPlayer` already computes a peak per buffer - 512 samples at 16 kHz, so
+ * about thirty values a second - and that callback was being thrown away. Thirty
+ * a second is too coarse to be a waveform in the oscilloscope sense and too fast
+ * to read as numbers, so it is drawn as an envelope: each value is one column,
+ * mirrored about the centre line, newest on the right.
+ *
+ * That makes the two things worth seeing obvious without reading anything. A
+ * dead microphone is a flat line rather than a missing panel, and clipping is a
+ * column that reaches the frame - which a single level number cannot show
+ * because it has already been averaged away by the time you look.
+ *
+ * `head` is the write position in a ring buffer the caller owns. Passing the
+ * array rather than a list avoids allocating thirty times a second for something
+ * that only gets drawn.
+ */
+@Composable
+fun MicWave(
+    levels: FloatArray,
+    head: Int,
+    live: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier) {
+        val n = levels.size
+        if (n == 0) return@Canvas
+        val mid = size.height / 2f
+        val step = size.width / n
+
+        // The centre line is drawn whether or not anything is arriving, so
+        // silence and "not connected" do not look like the same empty box.
+        drawLine(T.gridStrong, Offset(0f, mid), Offset(size.width, mid), 1f)
+
+        if (!live) return@Canvas
+
+        var peak = 0f
+        for (i in 0 until n) {
+            // Oldest at the left: read forward from just after the head.
+            val v = levels[(head + i) % n]
+            if (v > peak) peak = v
+            if (v <= 0f) continue
+            val h = (v.coerceAtMost(1f) * (mid - 2f))
+            val x = i * step
+            // Full scale reads as clipping, which is worth its own colour: the
+            // recording is already damaged by the time it looks like this.
+            val c = if (v >= 0.98f) T.bad else T.good
+            drawLine(c, Offset(x, mid - h), Offset(x, mid + h),
+                     strokeWidth = maxOf(1f, step * 0.8f))
+        }
+
+        // A quiet room is not a fault, so the peak line is only drawn once there
+        // is something to compare against.
+        if (peak > 0.02f) {
+            val ph = peak.coerceAtMost(1f) * (mid - 2f)
+            drawLine(T.textDim, Offset(0f, mid - ph),
+                     Offset(size.width, mid - ph), 1f)
+        }
+    }
+}
