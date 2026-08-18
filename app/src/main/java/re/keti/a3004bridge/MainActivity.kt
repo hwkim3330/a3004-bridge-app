@@ -149,6 +149,17 @@ private fun Bridge() {
     // has. Separate on purpose: see where mapLoaded is parsed.
     var floor by remember { mutableStateOf(1) }
     var mapLoaded by remember { mutableStateOf("") }
+    /*
+     * Whether anything is listening to the steering, and to the waypoints.
+     *
+     * teleop and navigate are off by default on the router, and their status files
+     * outlive them, so both of these used to read as fine while the frames went
+     * nowhere. StatusPoller now nulls a status that has stopped changing, and
+     * these follow it: a control with nothing behind it is faded rather than
+     * inviting.
+     */
+    var teleopLive by remember { mutableStateOf(false) }
+    var navLive by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
     var micOn by remember { mutableStateOf(true) }
     /*
@@ -297,7 +308,11 @@ private fun Bridge() {
                         else -> T.good
                     }
                 }
-                "navigate" -> navState = if (j == null) "no nav" to T.textDim else {
+                "navigate" -> navState = if (j == null) {
+                    navLive = false
+                    "no nav" to T.bad
+                } else {
+                    navLive = true
                     val st = j.optString("state")
                     navDriving = st == "driving"
                     val fault = j.optString("fault").takeIf { it.isNotEmpty() && it != "null" }
@@ -310,8 +325,13 @@ private fun Bridge() {
                     }
                 }
                 "teleop" -> if (j == null) {
-                    tlState = "no teleop" to T.textDim
+                    tlState = "no teleop" to T.bad
+                    teleopLive = false
+                    // Nothing is carrying the intent any more, so do not sit here
+                    // showing an armed vehicle.
+                    if (armed) { armed = false; sender.armed = false }
                 } else {
+                    teleopLive = true
                     val a = j.optBoolean("armed")
                     // If the daemon disarmed underneath us, reflect it.
                     if (!a && armed &&
@@ -828,7 +848,8 @@ private fun Bridge() {
                     Spacer(Modifier.height(T.s2))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                     if (waypoints.size > 1) {
-                        Chip("ROUTE ${waypoints.size}", emph = Emph.Filled) {
+                        Chip("ROUTE ${waypoints.size}", emph = Emph.Filled,
+                             enabled = navLive) {
                             if (goals[0]?.route(waypoints.toList()) == true) {
                                 goal = waypoints.last()
                                 pending = null
@@ -845,7 +866,7 @@ private fun Bridge() {
                         Spacer(Modifier.size(T.s2))
                     }
                     pending?.let { (px, py) ->
-                        Chip("GO HERE", emph = Emph.Filled) {
+                        Chip("GO HERE", emph = Emph.Filled, enabled = navLive) {
                             if (goals[0]?.goal(px, py) == true) {
                                 goal = px to py
                                 pending = null
@@ -884,7 +905,10 @@ private fun Bridge() {
                         Modifier.width(190.dp),
                         emph = Emph.Filled,
                         colour = if (armed) T.bad else T.accent,
-                        big = true
+                        big = true,
+                        // Arming with nothing listening is the one thing this
+                        // button must never look like it did.
+                        enabled = teleopLive || armed
                     ) {
                         if (armed) {
                             // Stop everything it can, not just the flag: a route

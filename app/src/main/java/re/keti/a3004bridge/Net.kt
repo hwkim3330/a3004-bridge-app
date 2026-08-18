@@ -523,19 +523,63 @@ class TeleopSender(
 class StatusPoller(
     private val base: String,
     private val everyMs: Long,
+    /**
+     * How long a status file may go unchanged before it is treated as gone.
+     *
+     * Several polls' worth, so an unlucky pair of identical fetches cannot
+     * declare a live daemon dead.
+     */
+    private val staleMs: Long = 3000,
     private val onStatus: (String, JSONObject?) -> Unit,
 ) : Thread("status") {
 
     private val stop = AtomicBoolean(false)
     fun halt() { stop.set(true); interrupt() }
 
+    /*
+     * A status file outlives the daemon that wrote it.
+     *
+     * The status files under /var/run are written by each daemon on the router,
+     * and none of them is removed when its daemon stops.
+     *
+     * (Written without a wildcard on purpose: Kotlin nests block comments, so the
+     * two characters of a path like that open a second comment inside this one and
+     * the closing marker then only shuts the inner half. It cost a build.) A fetch of a stopped teleop's file therefore succeeds and
+     * parses, so every panel that reads it kept showing the last state that
+     * daemon ever published, indefinitely, as if it were current. teleop,
+     * navigate, agx-cmd and can-bridge are all off by default, so this is the
+     * ordinary case rather than an edge one - and the panel that lies about it is
+     * the panel next to the button that arms a vehicle.
+     *
+     * What separates a live daemon from a stopped one is that a live one rewrites
+     * its file constantly: measured on the router, six polls over 3.6 s return six
+     * different bodies for every daemon here, even with nothing happening, because
+     * each carries a counter or an age. So a body that has not changed in a few
+     * seconds is a daemon that is gone, and gone reads the same as missing.
+     */
+    private val lastText = HashMap<String, String>()
+    private val lastChange = HashMap<String, Long>()
+
     override fun run() {
         val names = Wire.STATUS_NAMES
         while (!stop.get()) {
             for (n in names) {
                 if (stop.get()) return
-                val j = runCatching { JSONObject(httpText("$base/$n.json")) }.getOrNull()
-                onStatus(n, j)
+                val text = runCatching { httpText("$base/$n.json") }.getOrNull()
+                val now = System.currentTimeMillis()
+                if (text == null) {
+                    lastText.remove(n)
+                    lastChange.remove(n)
+                    onStatus(n, null)
+                    continue
+                }
+                if (lastText[n] != text) {
+                    lastText[n] = text
+                    lastChange[n] = now
+                }
+                val fresh = now - (lastChange[n] ?: now) < staleMs
+                onStatus(n, if (fresh) runCatching { JSONObject(text) }.getOrNull()
+                            else null)
             }
             sleepQuietly(everyMs)
         }

@@ -306,6 +306,14 @@ fun Chip(
     emph: Emph = Emph.Quiet,
     colour: Color = T.accent,
     big: Boolean = false,
+    /**
+     * A control that cannot do anything says so and does nothing.
+     *
+     * Faded and unresponsive, rather than removed: the button staying where it
+     * was is what tells somebody it exists and is unavailable, and a control that
+     * vanishes when a daemon stops is a control nobody knows to look for.
+     */
+    enabled: Boolean = true,
     onTap: () -> Unit,
 ) {
     val shape = if (big) T.rPill else T.rSm
@@ -342,14 +350,19 @@ fun Chip(
 
     Box(
         modifier
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .then(if (emph == Emph.Filled) Modifier.shadow(6.dp, shape, clip = false)
+            .graphicsLayer {
+                scaleX = scale; scaleY = scale
+                alpha = if (enabled) 1f else 0.4f
+            }
+            .then(if (emph == Emph.Filled && enabled)
+                      Modifier.shadow(6.dp, shape, clip = false)
                   else Modifier)
             .clip(shape)
             .background(fill)
             .clickable(
                 interactionSource = interaction,
                 indication = null,
+                enabled = enabled,
             ) {
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 onTap()
