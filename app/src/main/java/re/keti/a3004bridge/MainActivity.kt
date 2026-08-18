@@ -785,13 +785,40 @@ private fun Bridge() {
                         }
                     }
                     Spacer(Modifier.height(T.s3))
+                    /*
+                     * One control, and when it matters it says STOP.
+                     *
+                     * There is no separate emergency stop, because there is
+                     * already nothing to stop: teleop runs a 300 ms deadman, so
+                     * letting go of the stick, losing wifi, or backgrounding the
+                     * app all bring the output to neutral and drop the armed flag
+                     * on their own. A second red button for the case that already
+                     * self-stops would be theatre.
+                     *
+                     * What a person in a hurry does need is one obvious target,
+                     * so the armed state of this button is it: full width, red,
+                     * and labelled for what it does rather than for the flag it
+                     * clears. It said DISARM, which is the name of the mechanism
+                     * and not the name of the intention.
+                     */
                     Chip(
-                        if (armed) "DISARM" else "ARM",
+                        if (armed) "STOP" else "ARM",
                         Modifier.width(190.dp),
                         emph = Emph.Filled,
                         colour = if (armed) T.bad else T.accent,
                         big = true
-                    ) { armed = !armed }
+                    ) {
+                        if (armed) {
+                            // Stop everything it can, not just the flag: a route
+                            // being driven is the navigator's, and disarming alone
+                            // would leave it planning against a vehicle that has
+                            // gone quiet.
+                            tele[0]?.let { it.x = 0f; it.y = 0f; it.r = 0f }
+                            goals[0]?.stop(); goal = null
+                            pending = null; waypoints.clear()
+                        }
+                        armed = !armed
+                    }
                     Spacer(Modifier.height(T.s4))
                     YawSlider(armed, Modifier.width(200.dp).height(72.dp)) { r ->
                         tele[0]?.r = r

@@ -2,6 +2,7 @@ package re.keti.a3004bridge
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -16,6 +17,7 @@ import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.URL
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The transports. Each one runs on its own thread and hands finished results to
@@ -102,39 +104,128 @@ class MjpegReader(
         return bmp
     }
 
+    /*
+     * The newest frame, waiting to be decoded, and nothing older.
+     *
+     * Reading and decoding used to be the same thread: parse a frame, decode it,
+     * hand it to the UI, then read again. That works only while decoding keeps up.
+     * A 1280x720 JPEG at 20 fps is 20 decodes a second on a tablet that is also
+     * drawing a map and a lidar plot, and the moment decoding falls behind the
+     * socket stops being drained, the receive window closes, and the router's
+     * frames queue in the network instead. Latency then grows without a limit -
+     * the picture is late by however long the app has been behind, not by however
+     * long the link takes - and it never recovers, because there is no mechanism
+     * that discards the backlog.
+     *
+     * So the reader never decodes. It drains the socket at full speed and leaves
+     * the latest complete frame here; the decoder takes whatever is here now.
+     * If decoding is slower than arrival the frames in between are dropped
+     * instead of queued, which is the correct trade for a camera somebody is
+     * driving by: a frame that is two revolutions old has no value.
+     */
+    private val pending = AtomicReference<ByteArray?>(null)
+    private var arrived = 0L
+    private var dropped = 0L
+    private var decoded = 0L
+    private var decodeNanos = 0L
+    private var reported = 0L
+
+    private inner class Decoder : Thread("mjpeg-decode") {
+        override fun run() {
+            while (!stop.get()) {
+                val bytes = pending.getAndSet(null)
+                if (bytes == null) {
+                    // Nothing new. Park briefly rather than spin: at 20 fps the
+                    // next frame is at most 50 ms away.
+                    try { sleep(3) } catch (e: InterruptedException) { return }
+                    continue
+                }
+                val t0 = System.nanoTime()
+                val bmp = decode(bytes)
+                decodeNanos += System.nanoTime() - t0
+                decoded++
+                if (bmp != null) onFrame(bmp)
+                report()
+            }
+        }
+    }
+
+    /** Say how the pipeline is keeping up, so falling behind is visible. */
+    private fun report() {
+        val now = System.currentTimeMillis()
+        if (reported == 0L) { reported = now; return }
+        if (now - reported < 3000) return
+        val secs = (now - reported) / 1000.0
+        val ms = if (decoded > 0) decodeNanos / decoded / 1_000_000.0 else 0.0
+        Log.i("mjpeg",
+            "%.1f fps in, %.1f fps drawn, %d dropped as stale, decode %.1f ms"
+                .format(arrived / secs, decoded / secs, dropped, ms))
+        arrived = 0; decoded = 0; dropped = 0; decodeNanos = 0
+        reported = now
+    }
+
     private fun readParts(ins: InputStream) {
         val buf = ByteArray(1 shl 15)
         val acc = ByteArrayOutputStream(1 shl 18)
         var inFrame = false
         var prev = -1
+        val dec = Decoder().also { it.start() }
 
-        while (!stop.get()) {
-            val n = ins.read(buf)
-            if (n < 0) return
-            for (i in 0 until n) {
-                val b = buf[i].toInt() and 0xff
-                if (!inFrame) {
-                    if (prev == 0xFF && b == 0xD8) {          // SOI
+        try {
+            while (!stop.get()) {
+                val n = ins.read(buf)
+                if (n < 0) return
+                var i = 0
+                while (i < n) {
+                    if (!inFrame) {
+                        // Find the SOI. Nothing is copied while searching, so the
+                        // headers between parts cost only the scan.
+                        var j = i
+                        var at = -1
+                        while (j < n) {
+                            val b = buf[j].toInt() and 0xff
+                            if (prev == 0xFF && b == 0xD8) { prev = b; at = j; j++; break }
+                            prev = b; j++
+                        }
+                        if (at < 0) { i = n; continue }
                         acc.reset()
                         acc.write(0xFF); acc.write(0xD8)
                         inFrame = true
-                    }
-                } else {
-                    acc.write(b)
-                    if (prev == 0xFF && b == 0xD9) {          // EOI
-                        inFrame = false
-                        val bytes = acc.toByteArray()
-                        decode(bytes)?.let(onFrame)
-                        // A frame we cannot decode is not fatal; keep reading.
-                    } else if (acc.size() > 4 shl 20) {
-                        // Runaway: no EOI in 4 MB means the stream is not what
-                        // we think it is. Resynchronise rather than grow.
-                        inFrame = false
-                        acc.reset()
+                        i = j
+                    } else {
+                        // Find the EOI, then copy the run in one call. Copying
+                        // byte by byte through ByteArrayOutputStream.write(int)
+                        // meant 150 000 calls per frame, three million a second,
+                        // to move bytes that were already contiguous.
+                        var j = i
+                        var end = -1
+                        while (j < n) {
+                            val b = buf[j].toInt() and 0xff
+                            if (prev == 0xFF && b == 0xD9) { prev = b; end = j; j++; break }
+                            prev = b; j++
+                        }
+                        val upto = if (end >= 0) end + 1 else n
+                        acc.write(buf, i, upto - i)
+                        i = upto
+                        if (end >= 0) {
+                            inFrame = false
+                            arrived++
+                            // Replacing an undecoded frame is a drop, and it is
+                            // counted: a number that is normally zero and rises
+                            // under load is how this stays honest about what the
+                            // person is actually seeing.
+                            if (pending.getAndSet(acc.toByteArray()) != null) dropped++
+                        } else if (acc.size() > 4 shl 20) {
+                            // Runaway: no EOI in 4 MB means the stream is not what
+                            // we think it is. Resynchronise rather than grow.
+                            inFrame = false
+                            acc.reset()
+                        }
                     }
                 }
-                prev = b
             }
+        } finally {
+            dec.interrupt()
         }
     }
 }
