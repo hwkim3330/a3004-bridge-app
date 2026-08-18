@@ -338,10 +338,24 @@ private fun Bridge() {
                         j.optLong("age_ms") >= j.optLong("timeout_ms", 300)) {
                         armed = false
                     }
+                    /*
+                     * Whether teleop is passing anything on, not just whether it
+                     * is alive.
+                     *
+                     * teleop forwards to agx-cmd, and agx-cmd is off by default.
+                     * So the ordinary state is teleop running, accepting frames,
+                     * and dropping them - and the panel used to report that as
+                     * "disarmed · 20 Hz · udp 1406", which reads like a healthy
+                     * link. Arming from there does nothing and says nothing about
+                     * why. The web console names the same condition.
+                     */
+                    val fwd = j.optBoolean("forwarding")
                     tlState = ((if (a) "ARMED" else "disarmed") +
                             " · ${j.optInt("rate_hz")} Hz" +
+                            (if (fwd) "" else " · not forwarding") +
                             " · udp ${j.optLong("udp_commands")}") to
-                            (if (a) T.good else T.textDim)
+                            (if (a && fwd) T.good
+                             else if (!fwd) T.warn else T.textDim)
                 }
                 "ouster" -> if (j != null && ring == null)
                     ringState = "${j.optInt("channels")}ch · " + j.optString("profile")
