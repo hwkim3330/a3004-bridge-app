@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -33,6 +34,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -182,7 +184,10 @@ fun Status(s: String, colour: Color = T.textDim, modifier: Modifier = Modifier) 
      * a transition starts feeling like latency.
      */
     val c by animateColorAsState(colour, tween(220), label = "status")
-    Text(s, style = T.body.copy(color = c), modifier = modifier)
+    // One line, ellipsised: this is the part of a heading row that varies, so it is
+    // the part that has to give way when it grows. The card's name does not.
+    Text(s, style = T.body.copy(color = c), maxLines = 1,
+         overflow = TextOverflow.Ellipsis, modifier = modifier)
 }
 
 /** For digits that change in place. */
@@ -239,8 +244,20 @@ fun Panel(
                     .padding(start = T.s5, end = T.s5, top = T.s3),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(title, style = T.cardTitle, modifier = Modifier.weight(1f))
-                status()
+                /*
+                 * A gap the status cannot eat.
+                 *
+                 * The title took every spare pixel, so a status that grew - "16 kHz" becoming
+                 * "mic dropped" - closed the space between them completely and the heading read
+                 * as one word joined to the state. Shortening the state string fixed it once and
+                 * broke again the next time the string was longer. The title gives way instead:
+                 * it ellipsises, and the gap is a fixed size.
+                 */
+                Text(title, style = T.cardTitle, maxLines = 1)
+                Spacer(Modifier.width(T.s3))
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                    status()
+                }
             }
         }
         return
@@ -262,8 +279,24 @@ fun Panel(
             ),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(title, style = T.cardTitle, modifier = Modifier.weight(1f))
-            status()
+            /*
+             * A gap the status cannot eat.
+             *
+             * The title took every spare pixel, so a status that grew - "16 kHz" becoming
+             * "mic dropped" - closed the space between them completely and the heading read
+             * as one word joined to the state. Shortening the state string fixed it
+             * once and broke again the next time the string was longer.
+             *
+             * So the gap is fixed and the *state* gives way, not the title. Letting
+             * the title ellipsise was tried first and is worse: it turned MICROPHONE
+             * into "MICROP...", and a card whose name is cut off has lost the one
+             * piece of text on it that never changes.
+             */
+            Text(title, style = T.cardTitle, maxLines = 1)
+            Spacer(Modifier.width(T.s3))
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                status()
+            }
         }
         content(Modifier.weight(1f, fill = true))
     }

@@ -48,7 +48,20 @@ private const val TAU = (Math.PI * 2).toFloat()
 
 /** Polar plot of the lidar range ring. */
 @Composable
-fun RingPlot(ring: Ring?, maxRange: Float = 0f, modifier: Modifier = Modifier) {
+fun RingPlot(
+    ring: Ring?,
+    maxRange: Float = 0f,
+    modifier: Modifier = Modifier,
+    /**
+     * Whether the ring is still arriving.
+     *
+     * The last one is kept when it stops, for the same reason the camera keeps its
+     * last frame, and it was drawn at full strength beside a "no lidar" label. A
+     * plot of where the walls were a minute ago, drawn as though it were now, is
+     * the most confident-looking wrong thing on the screen.
+     */
+    live: Boolean = true,
+) {
     val tm = rememberTextMeasurer()
     Canvas(modifier) {
         //
@@ -128,11 +141,16 @@ fun RingPlot(ring: Ring?, maxRange: Float = 0f, modifier: Modifier = Modifier) {
             // the same distance, and that difference is what tells you what you
             // are looking at.
             val f = (ring.refl[i] / 200f).coerceIn(0f, 1f)
-            drawCircle(hsv(215f - f * 200f, 0.62f - f * 0.30f, 0.55f + f * 0.45f),
+            // Colour drained when the ring has stopped: the same dots, visibly
+            // not current, rather than a confident picture of a minute ago.
+            drawCircle(if (live)
+                           hsv(215f - f * 200f, 0.62f - f * 0.30f, 0.55f + f * 0.45f)
+                       else T.textFaint.copy(alpha = 0.55f),
                        dotR, Offset(cx + cos(a) * rr, cy + sin(a) * rr))
         }
-        drawCircle(T.accent.copy(alpha = 0.18f), 7f, Offset(cx, cy))
-        drawCircle(T.accent, 2.5f, Offset(cx, cy))
+        val hub = if (live) T.accent else T.textFaint
+        drawCircle(hub.copy(alpha = 0.18f), 7f, Offset(cx, cy))
+        drawCircle(hub, 2.5f, Offset(cx, cy))
     }
 }
 
@@ -412,16 +430,39 @@ fun MapPlot(
 
     // Only the part that has been seen is worth fitting to. Fitting the whole
     // 40 m grid puts a 12 m room in the middle sixth of the screen.
-    val bounds = remember(map.w, map.h, map.cells.size) {
+    /*
+     * The region worth looking at, recomputed as the survey grows.
+     *
+     * Two things were wrong here. The keys were map.w, map.h and cells.size,
+     * which never change - the grid is a fixed size whatever has been seen - so
+     * this ran once against the first map frame and the crop then stayed where it
+     * was for the rest of the session while the map filled in around it.
+     *
+     * And the test was "not unknown", which includes the isolated occupied cells
+     * the map picks up from single stray returns. One of those in a far corner
+     * puts the whole 20 m grid back on screen with the room as a smudge in the
+     * middle. Free cells are only written along rays that were actually traced,
+     * so they describe where the sensor has been able to see; the strays stay
+     * visible if they fall inside that.
+     */
+    val bounds = remember(map) {
         var lo = Int.MAX_VALUE; var hi = Int.MIN_VALUE
         var bo = Int.MAX_VALUE; var bi = Int.MIN_VALUE
         for (y in 0 until map.h) for (x in 0 until map.w) {
-            if (map.at(x, y) != MapFrame.S2_UNKNOWN) {
+            if (map.at(x, y) < MapFrame.S2_UNKNOWN - 8) {
                 if (x < lo) lo = x; if (x > hi) hi = x
                 if (y < bo) bo = y; if (y > bi) bi = y
             }
         }
-        if (lo > hi) null else intArrayOf(lo - 2, bo - 2, hi + 2, bi + 2)
+        // Always include the vehicle: a pose outside the surveyed box is exactly
+        // when somebody needs to see where it has got to.
+        val vx = map.cellXOf(map.poseXCm)
+        val vy = map.cellYOf(map.poseYCm)
+        if (lo > hi) null else {
+            val pad = maxOf(3, 150 / map.resCm)      // about 1.5 m, any level
+            intArrayOf(minOf(lo, vx) - pad, minOf(bo, vy) - pad,
+                       maxOf(hi, vx) + pad, maxOf(bi, vy) + pad)
+        }
     }
 
     // User zoom and pan, on top of the automatic fit. Reset when the map's

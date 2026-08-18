@@ -39,6 +39,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -118,6 +121,9 @@ private fun Bridge() {
     var camState by remember { mutableStateOf("idle" to T.textFaint) }
     var linkState by remember { mutableStateOf("connecting" to T.warn) }
     var ringState by remember { mutableStateOf("") }
+    // Set by the ring itself, cleared by the reader's own timeout, so the plot can
+    // show the difference between "these are the walls" and "these were".
+    var ringLive by remember { mutableStateOf(false) }
     var rcState by remember { mutableStateOf("no rc" to T.textDim) }
     var canState by remember { mutableStateOf("idle") }
     var tlState by remember { mutableStateOf("no teleop" to T.textDim) }
@@ -230,10 +236,11 @@ private fun Bridge() {
         val ringRx = RingReader(Wire.RING_PORT,
             onRing = { r ->
                 ring = r
+                ringLive = true
                 ringState = "${r.sectors} sectors · frame ${r.frameId}" +
                         if (r.alarm) "  ZONE" else ""
             },
-            onState = { s -> ringState = s }).also { it.start() }
+            onState = { s -> ringState = s; ringLive = false }).also { it.start() }
 
         val sender = TeleopSender(ep.host, Wire.TELE_PORT, Wire.TELE_HZ_ARMED)
             .also { tele[0] = it; it.start() }
@@ -497,11 +504,12 @@ private fun Bridge() {
              */
             Panel(
                 "LIDAR", Modifier.weight(0.85f),
-                status = { Status(ringState) }
+                status = { Status(ringState, if (ringLive) T.textDim else T.bad) }
             ) { body ->
                 // 0 means scale to the data: a sensor indoors puts everything inside
                 // the first ring of a fixed 30 m plot.
-                RingPlot(ring, 0f, body.fillMaxWidth().padding(T.s2))
+                RingPlot(ring, 0f, body.fillMaxWidth().padding(T.s2),
+                         live = ringLive)
                 /*
                  * The depth strip used to sit under the ring. Measured rather than
                  * argued about, and the numbers decided it: sixteen points of one
@@ -542,7 +550,7 @@ private fun Bridge() {
                  */
                 Box(body.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CameraBox(frame, Modifier.fillMaxHeight().aspectRatio(16f / 9f),
-                              framed = false)
+                              framed = false, live = camState.first == "live")
                 }
             }
 
@@ -586,7 +594,14 @@ private fun Bridge() {
                      */
                     status = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Status(micState)
+                            // The text takes the squeeze, not the button.
+                            //
+                            // Without the weight here, a long state - "waiting for
+                            // mic" - ate the chip's width inside the heading row's
+                            // bounded slot and the chip wrapped to one letter per
+                            // line. A control has an intrinsic size and a status
+                            // string does not; the flexible one has to be the text.
+                            Status(micState, modifier = Modifier.weight(1f, fill = false))
                             Spacer(Modifier.width(T.s3))
                             // Just the action. "MIC OFF" beside a card headed MICROPHONE said
                             // the word twice and pushed that heading onto two lines.
@@ -958,7 +973,18 @@ private fun Bridge() {
 @Composable
 private fun CameraBox(frame: androidx.compose.ui.graphics.ImageBitmap?,
                       modifier: Modifier,
-                      framed: Boolean = true) {
+                      framed: Boolean = true,
+                      /**
+                       * Whether the picture is still arriving.
+                       *
+                       * The last frame is kept when the stream drops, which is
+                       * right - a picture from a second ago beats a black
+                       * rectangle. But it was kept at full brightness beside a
+                       * small red "no stream" tag, so the panel showed a vivid
+                       * live-looking room and a label nobody reads first. Stale
+                       * data has to look stale, or the label is decoration.
+                       */
+                      live: Boolean = true) {
     Box(
         modifier
             .then(if (framed) Modifier.clip(T.rSm) else Modifier)
@@ -970,7 +996,16 @@ private fun CameraBox(frame: androidx.compose.ui.graphics.ImageBitmap?,
             Image(
                 bitmap = frame,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    // Dimmed and drained of colour when it is no longer arriving.
+                    // Not hidden: the shapes in the last frame are still worth
+                    // having, they are just not now.
+                    .alpha(if (live) 1f else 0.45f),
+                colorFilter = if (live) null
+                              else ColorFilter.colorMatrix(ColorMatrix().apply {
+                                  setToSaturation(0.15f)
+                              }),
                 // Fit, not Crop: the whole frame, because what is cut off
                 // by a crop is the edges - which is where an obstacle appears
                 // first.
