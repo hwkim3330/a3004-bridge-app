@@ -111,16 +111,16 @@ class MapReader(
                         onMap(m)
                         if (said != "ok") { said = "ok"; onState("") }
                     } else if (said != "bad") {
-                        said = "bad"; onState("지도 형식이 아님")
+                        said = "bad"; onState("not a map")
                     }
                 } else if (said != "none") {
                     // 404 is the ordinary case when slam2d is not enabled, so
                     // it is worth saying which of the two it is.
                     said = "none"
-                    onState(if (conn.responseCode == 404) "지도 없음" else "HTTP ${conn.responseCode}")
+                    onState(if (conn.responseCode == 404) "no map" else "HTTP ${conn.responseCode}")
                 }
             } catch (e: Exception) {
-                if (said != "err") { said = "err"; onState("연결 없음") }
+                if (said != "err") { said = "err"; onState("no link") }
             } finally {
                 runCatching { conn?.disconnect() }
             }
@@ -140,7 +140,43 @@ class MapReader(
  */
 class GoalSender(private val host: String, private val port: Int = 7604) {
     fun goal(xCm: Int, yCm: Int) = send("GOAL $xCm $yCm")
+
+    /**
+     * A route: legs driven in order.
+     *
+     * `navigate` checks each leg exactly as it checks a single goal - the plan,
+     * the stall timer, the score floor, the ring timeout - so a route cannot
+     * enter something a goal would have refused. That is why this is one command
+     * to one daemon rather than the app sending goals one at a time and deciding
+     * when each is done: the vehicle keeps driving if this tablet goes away.
+     */
+    fun route(points: List<Pair<Int, Int>>): Boolean {
+        if (points.isEmpty()) return false
+        val body = points.joinToString(" ") { "${it.first} ${it.second}" }
+        return send("ROUTE $body")
+    }
+
     fun stop() = send("STOP")
+
+    /**
+     * Ask the mapper to keep the map it has built.
+     *
+     * A different daemon and a different port from the goals: this talks to
+     * `slam2d`, which owns the map, rather than to `navigate`, which only reads
+     * it. The path is on the router's overlay so it survives a reboot - the
+     * exported map lives in tmpfs and does not.
+     *
+     * There is no reply. What tells you it worked is the router's log and the
+     * file being there next time; a UDP acknowledgement would only say the
+     * datagram arrived, which is not the thing being asked.
+     */
+    fun saveMap(name: String = "current", port: Int = 7605): Boolean = runCatching {
+        DatagramSocket().use { s ->
+            val b = "SAVE /etc/keti/maps/$name.s2mp".toByteArray()
+            s.send(DatagramPacket(b, b.size, InetAddress.getByName(host), port))
+        }
+        true
+    }.getOrDefault(false)
 
     private fun send(msg: String): Boolean = runCatching {
         DatagramSocket().use { s ->
@@ -240,14 +276,14 @@ class RangeReader(
                     if (f != null) {
                         onFrame(f)
                         if (said != "ok") { said = "ok"; onState("${f.rows}x${f.cols}") }
-                    } else if (said != "bad") { said = "bad"; onState("형식 아님") }
+                    } else if (said != "bad") { said = "bad"; onState("bad format") }
                 } else if (said != "none") {
                     said = "none"
-                    onState(if (conn.responseCode == 404) "깊이 없음"
+                    onState(if (conn.responseCode == 404) "no depth"
                             else "HTTP ${conn.responseCode}")
                 }
             } catch (e: Exception) {
-                if (said != "err") { said = "err"; onState("연결 없음") }
+                if (said != "err") { said = "err"; onState("no link") }
             } finally {
                 runCatching { conn?.disconnect() }
             }

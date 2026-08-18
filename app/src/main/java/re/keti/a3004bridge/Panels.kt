@@ -99,7 +99,7 @@ fun RingPlot(ring: Ring?, maxRange: Float = 0f, modifier: Modifier = Modifier) {
         drawLine(T.gridWeak, Offset(cx, cy - r), Offset(cx, cy + r))
 
         if (ring == null) {
-            val t = tm.measure("lidar 데이터 없음",
+            val t = tm.measure("no lidar data",
                 TextStyle(color = T.textFaint, fontSize = 12.sp))
             // Clamped inside: r comes from the shorter side, so on a wide, short
             // panel cy + r already sits past the bottom edge.
@@ -393,11 +393,20 @@ fun MapPlot(
        walls mean the pose is drifting - and what has appeared since, which is
        everything the map does not have and a person needs to see. */
     ring: Ring? = null,
+    /**
+     * Waypoints tapped but not yet sent, in order.
+     *
+     * Drawn as a line through them rather than as separate dots: what is being
+     * decided is a path, and three dots do not say which order they are in. The
+     * numbers do the rest.
+     */
+    routeCm: List<Pair<Int, Int>> = emptyList(),
     modifier: Modifier = Modifier,
     onTap: (Int, Int) -> Unit,
 ) {
+    val tm = rememberTextMeasurer()
     if (map == null) {
-        EmptyState("지도 없음", modifier = modifier)
+        EmptyState("no map", modifier = modifier)
         return
     }
 
@@ -541,7 +550,26 @@ fun MapPlot(
                 cross(Offset(sx(map.cellXOf(x)) + scale / 2,
                              sy(map.cellYOf(y)) + scale / 2), T.accent, true)
             }
-            pendingCm?.let { (x, y) ->
+                // The route being drawn, before it is committed. Placed with the
+            // same transform as everything else here: centimetres to cells, then
+            // cells to pixels, plus half a cell so a point sits in the middle of
+            // the cell it names rather than on its corner.
+            run {
+                fun at(cm: Pair<Int, Int>) = Offset(
+                    sx(map.cellXOf(cm.first)) + scale / 2,
+                    sy(map.cellYOf(cm.second)) + scale / 2)
+                for (i in 1 until routeCm.size)
+                    drawLine(T.accent, at(routeCm[i - 1]), at(routeCm[i]),
+                             strokeWidth = 2f)
+                routeCm.forEachIndexed { i, wp ->
+                    val o = at(wp)
+                    drawCircle(T.accent, radius = 8f, center = o)
+                    drawText(tm.measure("${i + 1}",
+                             TextStyle(color = Color.White, fontSize = 9.sp)),
+                             topLeft = Offset(o.x - 3f, o.y - 7f))
+                }
+            }
+        pendingCm?.let { (x, y) ->
                 cross(Offset(sx(map.cellXOf(x)) + scale / 2,
                              sy(map.cellYOf(y)) + scale / 2), T.warn, false)
             }
@@ -648,9 +676,10 @@ fun MicWave(
                      strokeWidth = maxOf(1f, step * 0.8f))
         }
 
-        drawText(tm, "피크 %.3f · 스케일 %.3f".format(peak, span),
-                 topLeft = Offset(4f, 2f),
-                 style = TextStyle(color = T.textDim, fontSize = 9.sp))
+        if (size.height > 22f && size.width > 60f)
+            drawText(tm, "peak %.3f · scale %.3f".format(peak, span),
+                     topLeft = Offset(4f, 2f),
+                     style = TextStyle(color = T.textDim, fontSize = 9.sp))
     }
 }
 
@@ -676,8 +705,9 @@ fun RangeView(f: RangeFrame?, modifier: Modifier = Modifier) {
     val tm = rememberTextMeasurer()
     Canvas(modifier) {
         if (f == null || f.rows <= 0 || f.cols <= 0) {
-            drawText(tm, "깊이 영상 없음", topLeft = Offset(6f, 4f),
-                     style = TextStyle(color = T.textDim, fontSize = 11.sp))
+            if (size.height > 26f && size.width > 60f)
+                drawText(tm, "no depth image", topLeft = Offset(6f, 4f),
+                         style = TextStyle(color = T.textDim, fontSize = 11.sp))
             return@Canvas
         }
         val cw = size.width / f.cols
@@ -702,10 +732,21 @@ fun RangeView(f: RangeFrame?, modifier: Modifier = Modifier) {
             if (y in 0f..size.height)
                 drawLine(T.textDim, Offset(0f, y), Offset(size.width, y), 1f)
         }
-        drawText(tm,
-                 "깊이 %dx%d · 최대 %.1f m · 선 = 지도가 쓰는 행"
-                     .format(f.rows, f.cols, scale / 100f),
-                 topLeft = Offset(6f, 4f),
-                 style = TextStyle(color = T.textDim, fontSize = 10.sp))
+        /*
+         * Only label it if there is room.
+         *
+         * drawText derives its constraints from the canvas minus the offset it is
+         * given, so on a pass where the canvas has no height yet - which happens,
+         * because layout runs before the first measured size settles - 0 minus a
+         * 4 px offset is a negative maxHeight and Compose throws. This crashed the
+         * app on launch, and the guard is the fix rather than removing the label.
+         */
+        if (size.height > 26f && size.width > 60f) {
+            drawText(tm,
+                     "DEPTH %dx%d · %.1f m full scale · lines = rows the map uses"
+                         .format(f.rows, f.cols, scale / 100f),
+                     topLeft = Offset(6f, 4f),
+                     style = TextStyle(color = T.textDim, fontSize = 10.sp))
+        }
     }
 }

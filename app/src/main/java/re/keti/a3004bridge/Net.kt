@@ -159,16 +159,29 @@ class PcmPlayer(
     fun halt() { stop.set(true); interrupt(); runCatching { track?.stop() } }
 
     override fun run() {
+        /*
+         * Wait for the microphone rather than giving up on it.
+         *
+         * This asked once and returned on failure. With the panel defaulting to on,
+         * the thread started before the WiFi association finished, got nothing, and
+         * died - so the card sat there reading "no mic" with a flat trace while the
+         * router was streaming perfectly. A reader that starts before its link is
+         * up is normal; one that never looks again is a bug.
+         */
         var rate = 16000
         var channels = 1
-        try {
-            val info = JSONObject(httpText("$url/info"))
-            rate = info.optInt("rate", 16000)
-            channels = info.optInt("channels", 1)
-        } catch (e: Exception) {
-            onState("no mic")
-            return
+        while (!stop.get()) {
+            try {
+                val info = JSONObject(httpText("$url/info"))
+                rate = info.optInt("rate", 16000)
+                channels = info.optInt("channels", 1)
+                break
+            } catch (e: Exception) {
+                onState("waiting for mic")
+                try { sleep(1500) } catch (i: InterruptedException) { return }
+            }
         }
+        if (stop.get()) return
 
         val cfg = if (channels == 2) AudioFormat.CHANNEL_OUT_STEREO
                   else AudioFormat.CHANNEL_OUT_MONO
@@ -193,7 +206,11 @@ class PcmPlayer(
             .build()
         track = t
         t.play()
-        onState("${rate / 1000} kHz ${if (channels == 1) "mono" else "stereo"}")
+        // Mono is unremarkable and is left unsaid: the heading row holds the card
+        // title, this state and the toggle, and "16 kHz mono" was wide enough to
+        // close the gap between MICROPHONE and itself. Stereo would be a surprise
+        // worth naming, so that case still says so.
+        onState("${rate / 1000} kHz${if (channels == 1) "" else " stereo"}")
 
         var conn: HttpURLConnection? = null
         try {
@@ -372,7 +389,7 @@ class TeleopSender(
                     if (failures > 0) { failures = 0; onState("") }
                 } catch (e: Exception) {
                     failures++
-                    if (failures == 1) onState("전송 실패: ${e.message ?: "unknown"}")
+                    if (failures == 1) onState("send failed: ${e.message ?: "unknown"}")
                 }
                 sleepQuietly((1000L / hz.coerceAtLeast(1)).coerceAtLeast(5L))
             }

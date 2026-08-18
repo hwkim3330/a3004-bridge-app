@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -202,8 +203,48 @@ fun Panel(
     title: String,
     modifier: Modifier = Modifier,
     status: @Composable () -> Unit = {},
+    /**
+     * Give the title row less room, for a card whose content is the point.
+     *
+     * The control card holds the camera, and every pixel the heading takes is a
+     * pixel off the picture somebody is driving by. Overlaying the title on the
+     * video would be the other way to win the space and is worse: it costs the
+     * legibility of both. So the heading keeps its own line and simply sits
+     * closer to the top edge.
+     */
+    tight: Boolean = false,
+    /**
+     * Draw the heading over the content instead of above it.
+     *
+     * For the control card, whose content is a camera somebody drives by. The
+     * heading only occupies the left of that line and the picture is centred, so
+     * the two do not meet - the row of space the heading reserved was empty
+     * either side of it, and giving it back is free height for the picture.
+     */
+    overlayTitle: Boolean = false,
     content: @Composable (Modifier) -> Unit,
 ) {
+    if (overlayTitle) {
+        Box(
+            modifier
+                .shadow(3.dp, T.rMd, clip = false)
+                .clip(T.rMd)
+                .background(T.surface)
+        ) {
+            content(Modifier.fillMaxWidth())
+            Row(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth()
+                    .padding(start = T.s5, end = T.s5, top = T.s3),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(title, style = T.cardTitle, modifier = Modifier.weight(1f))
+                status()
+            }
+        }
+        return
+    }
     Column(
         modifier
             // Shadow, not a border. On a grey page a white card is already
@@ -214,7 +255,11 @@ fun Panel(
             .background(T.surface)
     ) {
         Row(
-            Modifier.padding(start = T.s5, end = T.s5, top = T.s4, bottom = T.s3),
+            Modifier.padding(
+                start = T.s5, end = T.s5,
+                top = if (tight) T.s2 else T.s4,
+                bottom = if (tight) T.s1 else T.s3
+            ),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(title, style = T.cardTitle, modifier = Modifier.weight(1f))
