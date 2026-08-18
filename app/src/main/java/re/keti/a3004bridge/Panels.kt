@@ -605,6 +605,7 @@ fun MicWave(
     live: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val tm = rememberTextMeasurer()
     Canvas(modifier) {
         val n = levels.size
         if (n == 0) return@Canvas
@@ -618,12 +619,27 @@ fun MicWave(
         if (!live) return@Canvas
 
         var peak = 0f
+        for (v in levels) if (v > peak) peak = v
+        /*
+         * Scaled to what was heard, not to full scale.
+         *
+         * Drawn against 1.0 this was a single pixel either side of the centre in
+         * a quiet room - a peak of 0.013 is what a room with nobody talking
+         * measures - so the panel looked broken while the microphone was
+         * working. Found by building the same view on the desktop, where the
+         * two sat side by side and the fault was obvious.
+         *
+         * The floor stops a silent room amplifying its own noise floor into a
+         * waveform, and the gain is printed rather than hidden, because an
+         * envelope with an invisible scale invites reading loudness off the
+         * height.
+         */
+        val span = maxOf(peak, 0.02f)
         for (i in 0 until n) {
             // Oldest at the left: read forward from just after the head.
             val v = levels[(head + i) % n]
-            if (v > peak) peak = v
             if (v <= 0f) continue
-            val h = (v.coerceAtMost(1f) * (mid - 2f))
+            val h = ((v / span).coerceAtMost(1f) * (mid - 2f))
             val x = i * step
             // Full scale reads as clipping, which is worth its own colour: the
             // recording is already damaged by the time it looks like this.
@@ -632,12 +648,8 @@ fun MicWave(
                      strokeWidth = maxOf(1f, step * 0.8f))
         }
 
-        // A quiet room is not a fault, so the peak line is only drawn once there
-        // is something to compare against.
-        if (peak > 0.02f) {
-            val ph = peak.coerceAtMost(1f) * (mid - 2f)
-            drawLine(T.textDim, Offset(0f, mid - ph),
-                     Offset(size.width, mid - ph), 1f)
-        }
+        drawText(tm, "피크 %.3f · 스케일 %.3f".format(peak, span),
+                 topLeft = Offset(4f, 2f),
+                 style = TextStyle(color = T.textDim, fontSize = 9.sp))
     }
 }
