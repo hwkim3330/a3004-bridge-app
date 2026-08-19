@@ -85,7 +85,9 @@ class BeamGeometry(val altitudeDeg: FloatArray, val azimuthDeg: FloatArray) {
  * means the cloud and the polar plot beside it describe the same room in the same
  * orientation, which is the only reason to have both on one screen.
  */
-fun cloudFrom(f: RangeFrame, g: BeamGeometry): Pair<FloatBuffer, Int> {
+class Cloud(val buf: FloatBuffer, val count: Int, val reachM: Float)
+
+fun cloudFrom(f: RangeFrame, g: BeamGeometry): Cloud {
     val step = if (f.step > 0) f.step else 1
     val buf = ByteBuffer.allocateDirect(f.rows * f.cols * 4 * 4)
         .order(ByteOrder.nativeOrder()).asFloatBuffer()
@@ -112,7 +114,23 @@ fun cloudFrom(f: RangeFrame, g: BeamGeometry): Pair<FloatBuffer, Int> {
         }
     }
     buf.position(0)
-    return buf to n
+    /*
+     * How far the points actually reach, at the 90th percentile of range.
+     *
+     * The view is framed from this rather than from a fixed distance. A fixed
+     * 14 m put a five-metre room in the middle of the panel as a small clump with
+     * most of the box empty - the panel is the largest thing on the screen and the
+     * data was using a fifth of it. The percentile rather than the maximum because
+     * one return down a corridor should not zoom the room out to nothing.
+     */
+    val reach = if (n == 0) 6f else {
+        val r = FloatArray(n)
+        for (i in 0 until n) r[i] = buf.get(i * 4 + 3)
+        r.sort()
+        maxOf(1.5f, r[(n * 90) / 100])
+    }
+    buf.position(0)
+    return Cloud(buf, n, reach)
 }
 
 private const val VERT = """#version 300 es
@@ -150,7 +168,15 @@ void main() {
 class CloudRenderer : GLSurfaceView.Renderer {
 
     /** Set from the network thread, consumed on the GL thread. */
-    @Volatile private var pending: Pair<FloatBuffer, Int>? = null
+    @Volatile private var pending: Cloud? = null
+    /*
+     * Framed from the data until somebody pinches.
+     *
+     * Auto-fit is right while nobody has an opinion and wrong the moment they do:
+     * a view that keeps snapping back to its own idea of the right distance cannot
+     * be examined. So the first pinch takes it over for good.
+     */
+    @Volatile var userZoomed = false
     @Volatile var scaleM = 10f
     @Volatile var yaw = 0.6f
     @Volatile var pitch = 0.35f
@@ -169,7 +195,17 @@ class CloudRenderer : GLSurfaceView.Renderer {
     private val view = FloatArray(16)
     private val proj = FloatArray(16)
 
-    fun submit(c: Pair<FloatBuffer, Int>) { pending = c }
+    fun submit(c: Cloud) {
+        pending = c
+        if (!userZoomed && c.count > 0) {
+            // Far enough back that the reach fits the shorter side of a 42-degree
+            // field, with a little air. Eased rather than jumped: a view that
+            // lurches every time a doorway opens is unreadable.
+            val want = (c.reachM * 2.1f).coerceIn(2.5f, 90f)
+            dist += (want - dist) * 0.25f
+            scaleM = c.reachM
+        }
+    }
 
     override fun onSurfaceCreated(gl: javax.microedition.khronos.opengles.GL10?,
                                   cfg: javax.microedition.khronos.egl.EGLConfig?) {
@@ -192,7 +228,9 @@ class CloudRenderer : GLSurfaceView.Renderer {
     }
 
     override fun onDrawFrame(gl: javax.microedition.khronos.opengles.GL10?) {
-        pending?.let { (buf, n) ->
+        pending?.let { c ->
+            val buf = c.buf
+            val n = c.count
             pending = null
             count = n
             points = n
@@ -266,7 +304,7 @@ class CloudView(ctx: Context) : GLSurfaceView(ctx) {
         renderMode = RENDERMODE_WHEN_DIRTY
     }
 
-    fun submit(c: Pair<FloatBuffer, Int>) {
+    fun submit(c: Cloud) {
         renderer.submit(c)
         requestRender()
     }
@@ -279,6 +317,7 @@ class CloudView(ctx: Context) : GLSurfaceView(ctx) {
                 if (e.pointerCount >= 2) {
                     val s = span(e)
                     if (lastSpan > 1f && s > 1f) {
+                        renderer.userZoomed = true
                         renderer.dist = (renderer.dist * lastSpan / s)
                             .coerceIn(1.5f, 90f)
                     }

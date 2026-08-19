@@ -135,8 +135,12 @@ private fun LidarConsole() {
                  */
                 ring = r
                 ringLive = true
-                ringState = "${r.sectors} sectors · frame ${r.frameId}" +
-                        (if (r.alarm) "  ZONE" else "") to T.textDim
+                // Just the frame in the heading. The sector count belongs in the
+                // card, under the plot: it is fixed configuration rather than
+                // state, and putting both in a narrow heading ellipsised the one
+                // that changes.
+                ringState = ("frame ${r.frameId}" +
+                        (if (r.alarm) "  ZONE" else "")) to T.textDim
             },
             onState = { s -> ringState = s to T.bad; ringLive = false }
         ).also { it.start() }
@@ -264,9 +268,28 @@ private fun LidarConsole() {
             Modifier.fillMaxWidth().weight(1f),
             horizontalArrangement = Arrangement.spacedBy(T.s3)
         ) {
-            Panel("LIDAR", Modifier.weight(0.85f),
+            /*
+             * Narrower than the camera console's, because the cloud beside it says
+             * the same thing better.
+             *
+             * The two views are the same returns: the polar plot is a plan and the
+             * cloud is the room. Keeping the plan is worth it - it is read at a
+             * glance and needs no orbiting - but it does not need the width of a
+             * panel that has to be interpreted in three dimensions.
+             */
+            Panel("LIDAR", Modifier.weight(0.72f).fillMaxHeight(),
                   status = { Status(ringState.first, ringState.second) }) { body ->
-                RingPlot(ring, 0f, body.fillMaxWidth().padding(T.s2), live = ringLive)
+                Column(body) {
+                    RingPlot(ring, 0f,
+                             Modifier.fillMaxWidth().weight(1f).padding(T.s2),
+                             live = ringLive)
+                    // The dead space under a circle in a tall card, used for the one
+                    // thing about the ring that never changes.
+                    Status(ring?.let { "${it.sectors} sectors" } ?: "",
+                           T.textFaint,
+                           Modifier.fillMaxWidth().padding(start = T.s4,
+                                                           bottom = T.s3))
+                }
             }
 
             /*
@@ -277,7 +300,8 @@ private fun LidarConsole() {
              * state has the corner. The panel is not 16:9 - the cloud has no
              * native ratio, and a projection has no reason to be letterboxed.
              */
-            Panel("", Modifier.weight(2f), overlayTitle = true, status = {
+            Panel("", Modifier.weight(2.38f).fillMaxHeight(), overlayTitle = true,
+                  status = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Status(geometryState.first, geometryState.second)
                     Spacer(Modifier.width(T.s2))
@@ -295,7 +319,15 @@ private fun LidarConsole() {
                 }
             }
 
-            Panel("TELEMETRY", Modifier.weight(0.85f),
+            /*
+             * The same height as its neighbours, said explicitly.
+             *
+             * A Row gives each child its own height unless told otherwise, and this
+             * card's content is a few short lines - so it ended a hundred pixels
+             * short of the two beside it and the row read as broken. The other two
+             * only looked right because their content happened to fill.
+             */
+            Panel("TELEMETRY", Modifier.weight(0.85f).fillMaxHeight(),
                   status = { Status(rcState.first, rcState.second) }) { _ ->
                 Column(Modifier.padding(start = T.s4, end = T.s4, bottom = T.s3)) {
                     Label("RC · i-BUS")
@@ -338,7 +370,15 @@ private fun LidarConsole() {
 
         Spacer(Modifier.height(T.s3))
 
-        Panel("CONTROL", Modifier.weight(1f),
+        /*
+         * The heading over the content, so the map has the whole card.
+         *
+         * A titled row costs the map a line of height across the full width, and
+         * "CONTROL" only occupies the left of it - above the joystick, where there
+         * was nothing anyway. Overlaid, the map extends up to where the title sits
+         * and the card gives back what it was spending on a label.
+         */
+        Panel("CONTROL", Modifier.weight(1f), overlayTitle = true,
               status = { Badge(linkState.first, linkState.second) }) { _ ->
             Row(
                 Modifier.fillMaxSize().padding(T.s3),
