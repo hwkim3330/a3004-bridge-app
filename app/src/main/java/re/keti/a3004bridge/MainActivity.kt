@@ -432,6 +432,30 @@ private fun Bridge() {
          * badge moved to the control card, where the rest of the state already is,
          * and the row itself now costs nothing when it has nothing to say.
          */
+        /*
+         * One implementation of joining, two places that offer it.
+         *
+         * The big control in CONTROL is the one somebody will find; the header chip
+         * stays because that row is also where the address is edited, and a second
+         * copy of this logic there would be a second thing to keep correct.
+         */
+        val joinAp = {
+            // Binds only this app's sockets to the router's AP. The system keeps
+            // its own default network, which is what stops Android wandering off an
+            // access point that has no internet - and makes the router's
+            // 192.168.1.0/24 unambiguous even where the building network overlaps.
+            wifiNote = when (Wifi.bindToAp(ctx) { ok ->
+                wifiNote = if (ok) 2 else 3
+                if (ok) host = host       // re-key: reconnect over the AP
+            }) {
+                Wifi.Route.BOUND -> 2
+                Wifi.Route.REQUESTING -> 1
+                Wifi.Route.SYSTEM_DIALOG, Wifi.Route.SUGGESTION,
+                Wifi.Route.PICKER -> 4
+                Wifi.Route.UNSUPPORTED -> 5
+            }
+        }
+
         if (linkState.second != T.good) Row(verticalAlignment = Alignment.CenterVertically) {
             Badge(linkState.first, linkState.second)
             Spacer(Modifier.weight(1f))
@@ -456,23 +480,7 @@ private fun Bridge() {
                     else -> "JOIN AP"
                 }
                 , emph = Emph.Tinted
-            ) {
-                // Binds only this app's sockets to the router's AP. The system
-                // keeps its own default network, which is what stops Android
-                // wandering off an access point that has no internet - and makes
-                // the router's 192.168.1.0/24 unambiguous even where the building
-                // network overlaps it.
-                wifiNote = when (Wifi.bindToAp(ctx) { ok ->
-                    wifiNote = if (ok) 2 else 3
-                    if (ok) host = host       // re-key: reconnect over the AP
-                }) {
-                    Wifi.Route.BOUND -> 2
-                    Wifi.Route.REQUESTING -> 1
-                    Wifi.Route.SYSTEM_DIALOG, Wifi.Route.SUGGESTION,
-                    Wifi.Route.PICKER -> 4
-                    Wifi.Route.UNSUPPORTED -> 5
-                }
-            }
+            ) { joinAp() }
             Spacer(Modifier.width(T.s2))
             Chip("CONNECT") {
                 val h = hostEdit.trim().ifEmpty { DEFAULT_HOST }
@@ -929,26 +937,51 @@ private fun Bridge() {
                      * clears. It said DISARM, which is the name of the mechanism
                      * and not the name of the intention.
                      */
+                    /*
+                     * One big button, and it is whatever has to happen next.
+                     *
+                     * JOIN AP used to live in a header that only appeared when the
+                     * link was bad, which is the moment somebody is least inclined
+                     * to hunt for a small chip - and it read as missing the rest of
+                     * the time. Meanwhile ARM in that same moment is a button that
+                     * cannot do anything: with no route to the router there is no
+                     * teleop to arm, so it was sitting there faded.
+                     *
+                     * So the slot carries the one action that is useful in each
+                     * state. No link: join the access point. Linked and disarmed:
+                     * arm. Armed: stop. The position never moves, which is what
+                     * makes a big button worth having.
+                     */
+                    val linked = linkState.second == T.good
                     Chip(
-                        if (armed) "STOP" else "ARM",
+                        when {
+                            !linked -> if (wifiNote == 1) "JOINING AP" else "JOIN AP"
+                            armed -> "STOP"
+                            else -> "ARM"
+                        },
                         Modifier.width(190.dp),
                         emph = Emph.Filled,
-                        colour = if (armed) T.bad else T.accent,
+                        colour = if (armed && linked) T.bad else T.accent,
                         big = true,
                         // Arming with nothing listening is the one thing this
-                        // button must never look like it did.
-                        enabled = teleopLive || armed
+                        // button must never look like it did. Joining is always
+                        // available, because it is what fixes that.
+                        enabled = !linked || teleopLive || armed
                     ) {
-                        if (armed) {
-                            // Stop everything it can, not just the flag: a route
-                            // being driven is the navigator's, and disarming alone
-                            // would leave it planning against a vehicle that has
-                            // gone quiet.
-                            tele[0]?.let { it.x = 0f; it.y = 0f; it.r = 0f }
-                            goals[0]?.stop(); goal = null
-                            pending = null; waypoints.clear()
+                        if (!linked) {
+                            joinAp()
+                        } else {
+                            if (armed) {
+                                // Stop everything it can, not just the flag: a route
+                                // being driven is the navigator's, and disarming alone
+                                // would leave it planning against a vehicle that has
+                                // gone quiet.
+                                tele[0]?.let { it.x = 0f; it.y = 0f; it.r = 0f }
+                                goals[0]?.stop(); goal = null
+                                pending = null; waypoints.clear()
+                            }
+                            armed = !armed
                         }
-                        armed = !armed
                     }
                     Spacer(Modifier.height(T.s4))
                     YawSlider(armed, Modifier.width(200.dp).height(72.dp)) { r ->

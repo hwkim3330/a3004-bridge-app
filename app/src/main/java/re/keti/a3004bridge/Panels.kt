@@ -718,8 +718,11 @@ fun MicWave(
         }
 
         if (size.height > 22f && size.width > 60f)
+            // Inset enough for the glyph, not just for the pen. At 4 px the "p"
+            // of "peak" was clipped against the canvas edge - a descender starts
+            // left of the text origin, and 4 px was not the whole of it.
             drawText(tm, "peak %.3f · scale %.3f".format(peak, span),
-                     topLeft = Offset(4f, 2f),
+                     topLeft = Offset(10f, 2f),
                      style = TextStyle(color = T.textDim, fontSize = 9.sp))
     }
 }
