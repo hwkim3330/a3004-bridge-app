@@ -347,14 +347,30 @@ class CloudView(ctx: Context) : GLSurfaceView(ctx) {
 @Composable
 fun CloudPanel(frame: RangeFrame?, geometry: BeamGeometry?, modifier: Modifier = Modifier) {
     val holder = remember { arrayOfNulls<CloudView>(1) }
-    DisposableEffect(Unit) { onDispose { holder[0] = null } }
+    /*
+     * Convert once per frame, not once per recomposition.
+     *
+     * AndroidView's update block runs on every recomposition, and this screen
+     * recomposes whenever any status string changes - which is several times a
+     * second from four pollers. So a 64 x 512 reprojection, 32 768 cells of
+     * trigonometry, was running far more often than the three frames a second that
+     * actually arrive. Measured before: the app held a whole core of eight.
+     *
+     * The frame object is the identity to compare: RangeReader hands over a new one
+     * per poll, so "same reference" means "already drawn".
+     */
+    val last = remember { arrayOfNulls<Any>(1) }
+    DisposableEffect(Unit) { onDispose { holder[0] = null; last[0] = null } }
     AndroidView(
         factory = { ctx -> CloudView(ctx).also { holder[0] = it } },
         modifier = modifier,
         update = { v ->
             val f = frame
             val g = geometry
-            if (f != null && g != null) v.submit(cloudFrom(f, g))
+            if (f != null && g != null && last[0] !== f) {
+                last[0] = f
+                v.submit(cloudFrom(f, g))
+            }
         }
     )
 }
