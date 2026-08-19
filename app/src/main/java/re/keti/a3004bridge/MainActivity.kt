@@ -646,26 +646,50 @@ private fun Bridge() {
                     "TELEMETRY",
                     status = { Status(rcState.first, rcState.second) }
                 ) { _ ->
+                    /*
+                     * Bars only when there are channels behind them.
+                     *
+                     * Fourteen empty bars and the word "no can" is a card saying
+                     * nothing, twice, in the space of the largest thing on that side
+                     * of the screen - and it is the normal state, because the
+                     * receiver and the CAN bridge are both off by default. Worse,
+                     * fourteen grey bars look like fourteen channels sitting at
+                     * zero, which is a different fact from no receiver at all.
+                     *
+                     * So the bars appear when the link does, and their presence is
+                     * itself the signal. Absence gets one line each, which is all
+                     * "nothing here" needs.
+                     */
                     Column(Modifier.padding(start = T.s4, end = T.s4, bottom = T.s3)) {
                         Label("RC · i-BUS")
                         Spacer(Modifier.height(T.s2))
-                        for (row in 0 until 2) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(top = T.s1),
-                                horizontalArrangement = Arrangement.spacedBy(T.s1)
-                            ) {
-                                for (i in row * 7 until row * 7 + 7) {
-                                    ChannelBar(
-                                        channels[i], rcLive,
-                                        Modifier.weight(1f).height(6.dp)
-                                    )
+                        if (rcLive) {
+                            for (row in 0 until 2) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(top = T.s1),
+                                    horizontalArrangement = Arrangement.spacedBy(T.s1)
+                                ) {
+                                    for (i in row * 7 until row * 7 + 7) {
+                                        ChannelBar(
+                                            channels[i], rcLive,
+                                            Modifier.weight(1f).height(6.dp)
+                                        )
+                                    }
                                 }
                             }
+                        } else {
+                            // Short enough to fit. The first version explained what
+                            // would appear later and was ellipsised into
+                            // "no receiver - 14 channels when one appea...", which
+                            // is a worse thing to read than the two words that
+                            // matter.
+                            Status("no receiver", T.textFaint)
                         }
                         Spacer(Modifier.height(T.s4))
                         Label("CAN")
                         Spacer(Modifier.height(T.s1))
-                        Status(canState)
+                        Status(canState.ifEmpty { "no bus" },
+                               if (canState.startsWith("no")) T.textFaint else T.textDim)
                     }
                 }
             }
@@ -696,15 +720,6 @@ private fun Bridge() {
                 // The camera lives in this panel now, so its state is reported here.
                 Badge(linkState.first, linkState.second)
                 Spacer(Modifier.width(T.s3))
-                // The map is in this card, so its state is reported here rather
-                // than beside the camera, where it ended up when the two swapped.
-                Status(navState.first, navState.second)
-                if (slamState.first.isNotEmpty()) {
-                    Spacer(Modifier.width(T.s2))
-                    Status(slamState.first, slamState.second)
-                }
-                Spacer(Modifier.width(T.s3))
-                Status(tlState.first, tlState.second)
             }
         }) { _ ->
             /*
@@ -736,7 +751,17 @@ private fun Bridge() {
                     Modifier.weight(0.85f),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Joystick(armed, Modifier.size(190.dp)) { x, y ->
+                    /*
+                     * As big as its column allows.
+                     *
+                     * It was a fixed 190 dp in a column about 290 dp wide and 350 dp
+                     * tall, so nearly half of the panel's left third was white
+                     * space - and this is the control somebody steers with, where
+                     * size is precision. Derived from the column rather than typed
+                     * as a number, so it stays right if the weights either side
+                     * change again.
+                     */
+                    Joystick(armed, Modifier.fillMaxWidth(0.9f).aspectRatio(1f)) { x, y ->
                         tele[0]?.x = x; tele[0]?.y = y
                     }
                     Spacer(Modifier.height(T.s2))
@@ -768,6 +793,27 @@ private fun Bridge() {
                      * worse - and the control that did it was another thing to
                      * learn for no gain.
                      */
+                    /*
+                     * The mapper's and the navigator's state, over the map.
+                     *
+                     * They were right-aligned in the card's heading, which spans the
+                     * whole card - so they came out above the FLOOR buttons rather
+                     * than above the thing they describe, and read as belonging to
+                     * the controls. A caption inside the map's own column costs one
+                     * line of the map's height and puts each number over its
+                     * subject, which is the same reason the teleop line moved under
+                     * ARM.
+                     */
+                    Row(
+                        Modifier.fillMaxWidth().padding(bottom = T.s1),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Status(navState.first, navState.second)
+                        if (slamState.first.isNotEmpty()) {
+                            Spacer(Modifier.weight(1f))
+                            Status(slamState.first, slamState.second)
+                        }
+                    }
                     MapPlot(
                         map, goal, pending,
                         vehicleColour = when {
@@ -983,6 +1029,19 @@ private fun Bridge() {
                             armed = !armed
                         }
                     }
+                    /*
+                     * The router's own view of the arming, directly under the
+                     * control that does it.
+                     *
+                     * It used to sit at the far end of a row above the map with the
+                     * navigator's state and the mapper's - four subsystems, three
+                     * colours, one line, and the densest text on the screen. Only
+                     * this part described a button, and it is the part that says
+                     * whether pressing that button can do anything: "not forwarding"
+                     * means the intent reaches teleop and stops there.
+                     */
+                    Spacer(Modifier.height(T.s2))
+                    Status(tlState.first, tlState.second)
                     Spacer(Modifier.height(T.s4))
                     YawSlider(armed, Modifier.width(200.dp).height(72.dp)) { r ->
                         tele[0]?.r = r
