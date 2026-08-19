@@ -247,6 +247,15 @@ private fun DrawScope.well(centre: Offset, r: Float) {
 fun Joystick(
     armed: Boolean,
     modifier: Modifier = Modifier,
+    /**
+     * Called with true while a finger is on it.
+     *
+     * The lidar console arms from this rather than from a button: with teleop's
+     * 300 ms deadman already stopping the vehicle when the intent stops, a separate
+     * arm is a second thing saying the same thing. The camera console still has its
+     * button, so the default is a no-op and nothing there changes.
+     */
+    onHold: (Boolean) -> Unit = {},
     onMove: (Float, Float) -> Unit,
 ) {
     var knob by remember { mutableStateOf(Offset.Zero) }
@@ -257,6 +266,7 @@ fun Joystick(
             awaitEachGesture {
                 val down = awaitFirstDown()
                 held = true
+                onHold(true)
                 fun report(p: Offset) {
                     val c = Offset(size.width / 2f, size.height / 2f)
                     val r = min(size.width, size.height) / 2f * 0.96f
@@ -276,6 +286,7 @@ fun Joystick(
                     ch.consume()
                 }
                 held = false
+                onHold(false)
                 knob = Offset.Zero
                 onMove(0f, 0f)
             }
@@ -309,6 +320,15 @@ fun Joystick(
 fun YawSlider(
     armed: Boolean,
     modifier: Modifier = Modifier,
+    /**
+     * Called with true while a finger is on it.
+     *
+     * The lidar console arms from this rather than from a button: with teleop's
+     * 300 ms deadman already stopping the vehicle when the intent stops, a separate
+     * arm is a second thing saying the same thing. The camera console still has its
+     * button, so the default is a no-op and nothing there changes.
+     */
+    onHold: (Boolean) -> Unit = {},
     onMove: (Float) -> Unit,
 ) {
     var kx by remember { mutableStateOf(0f) }
@@ -319,6 +339,7 @@ fun YawSlider(
             awaitEachGesture {
                 val down = awaitFirstDown()
                 held = true
+                onHold(true)
                 fun report(p: Offset) {
                     val knobR = size.height / 2f * 0.82f
                     val lim = size.width / 2f - knobR - 2f
@@ -335,6 +356,7 @@ fun YawSlider(
                     ch.consume()
                 }
                 held = false
+                onHold(false)
                 kx = 0f
                 onMove(0f)
             }

@@ -100,7 +100,21 @@ private fun LidarConsole() {
     var teleopLive by remember { mutableStateOf(false) }
     var navLive by remember { mutableStateOf(false) }
     var linkState by remember { mutableStateOf("connecting" to T.warn) }
-    var armed by remember { mutableStateOf(false) }
+    /*
+     * Armed while a hand is on a control, not because a button was pressed.
+     *
+     * teleop already stops the vehicle 300 ms after the intent stops, so a separate
+     * arming flag was a second mechanism saying the same thing - and the button
+     * spent the rest of the time occupying the most prominent place on the screen
+     * doing nothing. Holding the stick is the deadman; letting go is the stop.
+     *
+     * Two sources because the machine has two: translation and rotation are
+     * independent on a mecanum base, and either one being held is a hand on the
+     * vehicle.
+     */
+    var stickHeld by remember { mutableStateOf(false) }
+    var yawHeld by remember { mutableStateOf(false) }
+    val armed = stickHeld || yawHeld
     var navDriving by remember { mutableStateOf(false) }
     var goal by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var pending by remember { mutableStateOf<Pair<Int, Int>?>(null) }
@@ -196,15 +210,13 @@ private fun LidarConsole() {
                 "teleop" -> if (j == null) {
                     tlState = "no teleop" to T.bad
                     teleopLive = false
-                    if (armed) { armed = false; sender.armed = false }
                 } else {
                     teleopLive = true
                     val a = j.optBoolean("armed")
                     val fwd = j.optBoolean("forwarding")
-                    if (!a && armed &&
-                        j.optLong("age_ms") >= j.optLong("timeout_ms", 300)) {
-                        armed = false
-                    }
+                    // Nothing to correct here any more: the arming is whatever the
+                    // hand is doing, so the daemon disarming underneath cannot leave
+                    // this screen claiming otherwise.
                     tlState = ((if (a) "ARMED" else "disarmed") +
                             (if (fwd) "" else " · not forwarding")) to
                             (if (a && fwd) T.good else if (!fwd) T.warn else T.textDim)
@@ -237,7 +249,9 @@ private fun LidarConsole() {
         }.also { it.start() }
 
         onPauseOrDispose {
-            armed = false
+            // A screen going away is a hand leaving.
+            stickHeld = false
+            yawHeld = false
             sender.armed = false
             ringRx.halt(); rangeRx.halt(); beam.halt(); mapRx.halt()
             status.halt(); sender.halt()
@@ -269,15 +283,16 @@ private fun LidarConsole() {
             horizontalArrangement = Arrangement.spacedBy(T.s3)
         ) {
             /*
-             * Narrower than the camera console's, because the cloud beside it says
-             * the same thing better.
+             * 0.85, 2, 0.85 - the same three weights as the row below.
              *
-             * The two views are the same returns: the polar plot is a plan and the
-             * cloud is the room. Keeping the plan is worth it - it is read at a
-             * glance and needs no orbiting - but it does not need the width of a
-             * panel that has to be interpreted in three dimensions.
+             * The cloud had 2.38 and the plot 0.72, which read better on its own and
+             * broke the only alignment that matters here: with both rows sharing the
+             * weights, the cloud sits exactly above the map, and the two views a
+             * person compares are the same width and the same centre. Two rows that
+             * nearly agree look like a mistake; a shared grid does not have to be
+             * measured to be believed.
              */
-            Panel("LIDAR", Modifier.weight(0.72f).fillMaxHeight(),
+            Panel("LIDAR", Modifier.weight(0.85f).fillMaxHeight(),
                   status = { Status(ringState.first, ringState.second) }) { body ->
                 Column(body) {
                     RingPlot(ring, 0f,
@@ -300,7 +315,7 @@ private fun LidarConsole() {
              * state has the corner. The panel is not 16:9 - the cloud has no
              * native ratio, and a projection has no reason to be letterboxed.
              */
-            Panel("", Modifier.weight(2.38f).fillMaxHeight(), overlayTitle = true,
+            Panel("", Modifier.weight(2f).fillMaxHeight(), overlayTitle = true,
                   status = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Status(geometryState.first, geometryState.second)
@@ -387,7 +402,8 @@ private fun LidarConsole() {
             ) {
                 Column(Modifier.weight(0.85f),
                        horizontalAlignment = Alignment.CenterHorizontally) {
-                    Joystick(armed, Modifier.fillMaxWidth(0.9f).aspectRatio(1f)) { x, y ->
+                    Joystick(armed, Modifier.fillMaxWidth(0.9f).aspectRatio(1f),
+                             onHold = { stickHeld = it }) { x, y ->
                         tele[0]?.x = x; tele[0]?.y = y
                     }
                     Spacer(Modifier.height(T.s2))
@@ -464,32 +480,36 @@ private fun LidarConsole() {
                         }
                         Spacer(Modifier.height(T.s2))
                     }
-                    // The same one control, saying whatever has to happen next.
+                    /*
+                     * Join when there is nothing to talk to; stop when there is.
+                     *
+                     * With arming gone the slot is not an interlock any more, and
+                     * what remains worth a big target is the panic one: zero the
+                     * intent, cancel whatever the navigator is driving, forget the
+                     * route. Enabled always, because a stop that is greyed out is
+                     * the wrong thing to find in the moment it is wanted.
+                     */
                     Chip(
                         when {
                             !linked -> if (wifiNote == 1) "JOINING AP" else "JOIN AP"
-                            armed -> "STOP"
-                            else -> "ARM"
+                            else -> "STOP"
                         },
                         Modifier.width(190.dp),
                         emph = Emph.Filled,
-                        colour = if (armed && linked) T.bad else T.accent,
-                        big = true,
-                        enabled = !linked || teleopLive || armed
+                        colour = if (linked) T.bad else T.accent,
+                        big = true
                     ) {
                         if (!linked) joinAp() else {
-                            if (armed) {
-                                tele[0]?.let { it.x = 0f; it.y = 0f; it.r = 0f }
-                                goals[0]?.stop(); goal = null
-                                pending = null; waypoints.clear()
-                            }
-                            armed = !armed
+                            tele[0]?.let { it.x = 0f; it.y = 0f; it.r = 0f }
+                            goals[0]?.stop(); goal = null
+                            pending = null; waypoints.clear()
                         }
                     }
                     Spacer(Modifier.height(T.s2))
                     Status(tlState.first, tlState.second)
                     Spacer(Modifier.height(T.s3))
-                    YawSlider(armed, Modifier.width(200.dp).height(72.dp)) { r ->
+                    YawSlider(armed, Modifier.width(200.dp).height(72.dp),
+                              onHold = { yawHeld = it }) { r ->
                         tele[0]?.r = r
                     }
                     Spacer(Modifier.height(T.s2))
