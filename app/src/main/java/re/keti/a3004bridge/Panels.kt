@@ -25,6 +25,12 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
@@ -791,6 +797,81 @@ fun RangeView(f: RangeFrame?, modifier: Modifier = Modifier) {
                          .format(f.rows, f.cols, scale / 100f),
                      topLeft = Offset(6f, 4f),
                      style = TextStyle(color = T.textDim, fontSize = 10.sp))
+        }
+    }
+}
+
+/**
+ * Which way the vehicle is leaning, as an instrument rather than two numbers.
+ *
+ * Roll and pitch come from the lidar's own IMU - the one thing a range scan cannot
+ * tell you. The 2D map assumes the sensor is level, and a ramp or a kerb makes that
+ * assumption quietly false: the same wall measured from a tilted sensor lands
+ * somewhere else on the grid, and the match score falls without saying why.
+ *
+ * Drawn as a horizon because that is the shape the answer has. Two numbers require
+ * reading and comparing; a line that is not level is seen. The numbers are still
+ * printed underneath, because "seen" is not "measured".
+ */
+@Composable
+fun TiltView(
+    rollDeg: Float,
+    pitchDeg: Float,
+    live: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val tm = rememberTextMeasurer()
+    // Eased, because the IMU is noisy at a hundred hertz and an instrument that
+    // twitches is one nobody trusts. The mean is already taken on the router; this
+    // is the last of the jitter.
+    val roll by animateFloatAsState(rollDeg, tween(220), label = "roll")
+    val pitch by animateFloatAsState(pitchDeg, tween(220), label = "pitch")
+    Canvas(modifier) {
+        val r = min(size.width, size.height) / 2f - 2f
+        if (r < 12f) return@Canvas
+        val c = Offset(size.width / 2f, size.height / 2f)
+        val sky = if (live) Color(0xFF9CC7F5) else T.surfaceHi
+        val ground = if (live) Color(0xFFC79A72) else T.gridStrong
+        // Degrees per pixel, so the ladder and the horizon agree.
+        val perDeg = r / 45f
+
+        clipPath(Path().apply { addOval(Rect(c.x - r, c.y - r, c.x + r, c.y + r)) }) {
+            rotate(-roll, c) {
+                translate(0f, pitch * perDeg) {
+                    drawRect(sky, Offset(c.x - 2 * r, c.y - 3 * r),
+                             Size(4 * r, 3 * r))
+                    drawRect(ground, Offset(c.x - 2 * r, c.y),
+                             Size(4 * r, 3 * r))
+                    drawLine(Color.White.copy(alpha = 0.9f),
+                             Offset(c.x - 2 * r, c.y), Offset(c.x + 2 * r, c.y), 2f)
+                    // A ladder every ten degrees. Without it a horizon says which
+                    // way but not how much, and ten degrees is about where a floor
+                    // stops being a floor.
+                    for (d in intArrayOf(-20, -10, 10, 20)) {
+                        val y = c.y - d * perDeg
+                        val w = if (d % 20 == 0) r * 0.42f else r * 0.26f
+                        drawLine(Color.White.copy(alpha = 0.55f),
+                                 Offset(c.x - w, y), Offset(c.x + w, y), 1.5f)
+                    }
+                }
+            }
+        }
+        drawCircle(T.gridStrong, r, c, style = Stroke(1f))
+        // The airframe mark, fixed to the panel rather than to the horizon: it is
+        // the vehicle, and the vehicle is what the horizon moves against.
+        val a = r * 0.30f
+        drawLine(T.text, Offset(c.x - a, c.y), Offset(c.x - a * 0.35f, c.y), 2.5f)
+        drawLine(T.text, Offset(c.x + a * 0.35f, c.y), Offset(c.x + a, c.y), 2.5f)
+        drawCircle(T.text, 2.5f, c)
+
+        if (size.height > 34f) {
+            val t = tm.measure(
+                if (live) "roll %+.1f°  pitch %+.1f°".format(roll, pitch)
+                else "no imu",
+                TextStyle(color = if (live) T.textDim else T.textFaint,
+                          fontSize = 10.sp))
+            drawText(t, topLeft = Offset(c.x - t.size.width / 2f,
+                                         size.height - t.size.height - 1f))
         }
     }
 }

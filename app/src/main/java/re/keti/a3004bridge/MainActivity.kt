@@ -124,6 +124,22 @@ private fun Bridge() {
     // Set by the ring itself, cleared by the reader's own timeout, so the plot can
     // show the difference between "these are the walls" and "these were".
     var ringLive by remember { mutableStateOf(false) }
+    /*
+     * The sensor's own range image, for the panel the camera used to have.
+     *
+     * The camera is a USB device and that port is wanted for the CAN adapter, so
+     * the big panel needs something when there is no camera - and the lidar is
+     * already producing the thing to put there. It is the same 3D data the ring is
+     * a slice of: 64 channels by 1024 columns of range, which is a picture of the
+     * room rather than a plan of it.
+     *
+     * ouster-edge builds it only when range_image is on, because it costs a fifth
+     * of a core - affordable exactly when the camera is not running, which is the
+     * case this exists for.
+     */
+    var rangeFrame by remember { mutableStateOf<RangeFrame?>(null) }
+    var rangeState by remember { mutableStateOf("" to T.textDim) }
+    val camLive = camState.first == "live"
     var rcState by remember { mutableStateOf("no rc" to T.textDim) }
     var canState by remember { mutableStateOf("idle") }
     var tlState by remember { mutableStateOf("no teleop" to T.textDim) }
@@ -232,6 +248,20 @@ private fun Bridge() {
                 linkState = host to T.good
             },
             onState = { s -> camState = s to T.bad }).also { it.start() }
+
+        /*
+         * Polled at 3 Hz, not the sensor's 10.
+         *
+         * 23 kB an image over wifi, of a room that changes slowly, and the panel it
+         * fills is a picture to glance at rather than a control loop. Faster costs
+         * bandwidth the camera may want back.
+         */
+        val rangeRx = RangeReader(ep.sensors, 330,
+            onFrame = { f ->
+                rangeFrame = f
+                rangeState = "${f.rows}x${f.cols} · frame ${f.frameId}" to T.good
+            },
+            onState = { st -> rangeState = st to T.textDim }).also { it.start() }
 
         val ringRx = RingReader(Wire.RING_PORT,
             onRing = { r ->
@@ -391,7 +421,7 @@ private fun Bridge() {
             // not relying on the deadman is the point.
             armed = false
             sender.armed = false
-            mjpeg.halt(); ringRx.halt(); status.halt(); sender.halt()
+            mjpeg.halt(); rangeRx.halt(); ringRx.halt(); status.halt(); sender.halt()
             mapRx.halt()
             pcm[0]?.halt(); pcm[0] = null
             tele[0] = null
@@ -540,9 +570,17 @@ private fun Bridge() {
                 overlayTitle = true,
                 status = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Only the camera's own state. The mapper's confidence
-                        // went with the map, into the control card.
-                        Badge(camState.first, camState.second)
+                        // Whichever picture the panel is showing says so. With the
+                        // camera unplugged its badge would otherwise be the only
+                        // label on a panel full of lidar.
+                        if (camLive) {
+                            Badge(camState.first, camState.second)
+                        } else {
+                            Status("lidar depth", T.textDim)
+                            Spacer(Modifier.width(T.s2))
+                            Badge(rangeState.first.ifEmpty { camState.first },
+                                  if (rangeFrame != null) T.good else camState.second)
+                        }
                     }
                 }
             ) { body ->
@@ -556,9 +594,34 @@ private fun Bridge() {
                  * itself framed reads as two boxes; the card's own rounded corners
                  * are the frame, so the image takes all of it.
                  */
-                Box(body.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CameraBox(frame, Modifier.fillMaxHeight().aspectRatio(16f / 9f),
-                              framed = false, live = camState.first == "live")
+                /*
+                 * The camera when there is one, the lidar's range image when there
+                 * is not.
+                 *
+                 * The USB port the camera used is wanted for the CAN adapter, so
+                 * "no camera" stops being a fault and becomes a configuration - and
+                 * the biggest panel on the screen should not be a black rectangle
+                 * because of it. The sensor is already producing a picture: 64
+                 * channels by 1024 columns of range, which is the room rather than
+                 * a plan of it.
+                 *
+                 * The depth image takes the whole panel rather than 16:9. It is
+                 * 1024 columns of a 360-degree sweep by 64 rows of 45 degrees, so
+                 * its own ratio is nothing like a camera's and letterboxing it to
+                 * one would throw away the width that makes it readable.
+                 */
+                if (camLive) {
+                    Box(body.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CameraBox(frame, Modifier.fillMaxHeight().aspectRatio(16f / 9f),
+                                  framed = false, live = true)
+                    }
+                } else if (rangeFrame != null) {
+                    RangeView(rangeFrame, body.fillMaxSize())
+                } else {
+                    Box(body.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CameraBox(frame, Modifier.fillMaxHeight().aspectRatio(16f / 9f),
+                                  framed = false, live = false)
+                    }
                 }
             }
 
