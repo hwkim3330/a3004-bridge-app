@@ -6,10 +6,10 @@
  * that port is wanted for the CAN adapter, so the machine either has a camera and
  * a microphone or it has neither.
  *
- * The shared source is *referenced*, not copied. Everything that talks to the
- * router, draws a panel or joins the access point lives in ../app/src/main/java and
- * both modules compile it: the bugs fixed there stay fixed in both, which a copy
- * would not manage for long. Only this module's own activity is local.
+ * The shared source is a library, :shared, which both apps depend on. It was first
+ * arranged as this module compiling the other app's source directory - which works
+ * and points the dependency the wrong way. Only this module's own activity and its
+ * GL view are local.
  */
 plugins {
 	id("com.android.application")
@@ -39,13 +39,6 @@ android {
 		}
 	}
 
-	sourceSets {
-		getByName("main") {
-			java.srcDirs("src/main/java", "../app/src/main/java")
-			res.srcDirs("src/main/res", "../app/src/main/res")
-		}
-	}
-
 	compileOptions {
 		sourceCompatibility = JavaVersion.VERSION_17
 		targetCompatibility = JavaVersion.VERSION_17
@@ -55,13 +48,5 @@ android {
 }
 
 dependencies {
-	implementation("androidx.core:core-ktx:1.13.1")
-	implementation(platform("androidx.compose:compose-bom:2024.12.01"))
-	implementation("androidx.compose.ui:ui")
-	implementation("androidx.compose.ui:ui-graphics")
-	implementation("androidx.compose.foundation:foundation")
-	implementation("androidx.compose.material3:material3")
-	implementation("androidx.activity:activity-compose:1.9.3")
-	implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
-	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+	implementation(project(":shared"))
 }

@@ -588,7 +588,16 @@ class StatusPoller(
 
 // ---------------------------------------------------------------- helpers
 
-internal fun httpText(url: String): String {
+/*
+ * Public because the module boundary made it so.
+ *
+ * These two were `internal`, which meant "private to this app" - and they still
+ * read that way until the shared code became a library and the second console
+ * could no longer see them. They are the shared vocabulary now: every reader in
+ * either app fetches a body and waits between attempts, and having each app write
+ * its own copy of a two-line helper is how two subtly different timeouts appear.
+ */
+fun httpText(url: String): String {
     val c = (URL(url).openConnection() as HttpURLConnection).apply {
         connectTimeout = 1500
         readTimeout = 1500
@@ -600,6 +609,6 @@ internal fun httpText(url: String): String {
     }
 }
 
-internal fun sleepQuietly(ms: Long) {
+fun sleepQuietly(ms: Long) {
     try { Thread.sleep(ms) } catch (e: InterruptedException) { /* expected */ }
 }

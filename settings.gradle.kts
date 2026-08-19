@@ -12,5 +12,6 @@ dependencyResolutionManagement {
 	}
 }
 rootProject.name = "A3004Bridge"
-include(":app")
+include(":shared")
+include(":camera")
 include(":lidar")
